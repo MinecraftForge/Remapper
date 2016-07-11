@@ -1,0 +1,36 @@
+#eclipse
+/bin
+/.settings
+/.classpath
+
+#In case people make their workspace in the repo
+/eclipse/
+
+#idea
+/.idea
+/classes
+*.iml
+
+#gradle
+/build
+/.gradle
+
+#occupational hazards
+/projects/
+/repo/
+/buildSrc
+
+#Patch rejects
+/patches-/
+*.patch.rej
+
+# FML changelog
+changelog.txt
+/patches_old/
+/patches_old_bak/
+*.py
+*.7z
+/ApplyRange.log
+/ExtractRange.log
+/ExtractRange.txt
+/mappings.json

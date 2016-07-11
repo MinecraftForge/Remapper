@@ -1,0 +1,141 @@
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'net.sf.proguard:proguard-gradle:5.2.1'
+    }
+}
+
+apply plugin: 'maven'
+apply plugin: 'java'
+apply plugin: 'eclipse'
+apply plugin: 'idea'
+
+
+repositories {
+    mavenCentral()
+    maven {
+        name = "forge"
+        url = "http://files.minecraftforge.net/maven"
+    }
+    flatDir {
+        name "fileRepo"
+        dirs "repo"
+    }
+}
+
+group = 'net.minecraftforge'
+archivesBaseName = 'remapper'
+version = '0.1-SNAPSHOT'
+targetCompatibility = '1.7'
+sourceCompatibility = '1.7'
+
+ext.main_class = 'net.minecraftforge.remapper.RemapperMain'
+
+dependencies {
+    compile 'net.sf.jopt-simple:jopt-simple:4.5'
+    compile 'com.google.guava:guava:14.0'
+    compile 'com.google.code.gson:gson:2.7'
+    compile 'net.minecraftforge.srg2source:Srg2Source:4.0-SNAPSHOT'
+}
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+
+/*
+task fatJar(type: Jar, dependsOn: jar) {
+    doFirst { from zipTree(jar.archivePath) }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    classifier = 'fatjar'
+    inputs.file jar.archivePath
+    from(configurations.compile.collect { zipTree(it).matching { include '** /*.class' } })
+    manifest { attributes 'Main-Class': main_class }
+}
+
+task shrinkJar(type: proguard.gradle.ProGuardTask, dependsOn: fatJar) {
+    inputs.file fatJar.archivePath
+    ext {
+        outDir = file("${buildDir}/proguard")
+        obfuscatedJar = "${outDir}/${jar.baseName}.jar"
+    }
+    outDir.mkdirs()
+
+    injars jar.archivePath
+    outjars obfuscatedJar
+    //libraryjars configurations.compile
+    configuration 'proguard.pro'
+}
+
+task shrunkJar(type: Jar, dependsOn: shrinkJar) {
+    classifier = 'shrunk'
+    from zipTree(shrinkJar.obfuscatedJar)
+    manifest { attributes 'Main-Class': main_class }
+}
+Need to figure out how to get proguard to work right so we can shrink the jar...
+*/
+
+artifacts {
+    archives sourcesJar
+    //archives shrunkJar
+}
+configurations.runtime.artifacts.removeAll { it.archiveTask.is fatJar }
+
+jar {
+    manifest { attributes 'Main-Class': main_class }
+}
+
+uploadArchives {
+    repositories {
+        add getProject().repositories.mavenLocal()
+    }
+    repositories.mavenDeployer {
+	
+        if (project.hasProperty('forgeMavenPass')) {
+            logger.info('Publishing to files server')
+            repository(url: "http://files.minecraftforge.net/maven/manage/upload") {
+                authentication(userName: "forge", password: project.getProperty('forgeMavenPass'))
+            }
+        } else {
+            logger.info('Publishing to repo folder')
+            repository(url: 'file://localhost/' + project.file('repo').getAbsolutePath())
+        }
+
+        pom {
+            groupId = project.group
+            version = project.version
+            artifactId = project.archivesBaseName
+        }
+        pom.project {
+            name project.archivesBaseName
+            packaging 'jar'
+            description 'Srg2Source remapper'
+            url 'https://github.com/MinecraftForge/Remapper'
+
+            scm {
+                url 'https://github.com/MinecraftForge/Remapper'
+                connection 'scm:git:git://github.com/MinecraftForge/Remapper.git'
+                developerConnection 'scm:git:git@github.com:MinecraftForge/Remapper.git'
+            }
+
+            issueManagement {
+                system 'github'
+                url 'https://github.com/MinecraftForge/Remapper/issues'
+            }
+
+            developers {
+                developer {
+                    id 'LexManos'
+                    name 'Lex Manos'
+                    roles { role 'developer' }
+                }
+            }
+        }
+    }
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '2.9'
+}
