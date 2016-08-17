@@ -27,7 +27,7 @@ repositories {
 
 group = 'net.minecraftforge'
 archivesBaseName = 'remapper'
-version = '0.1-SNAPSHOT'
+version = '0.1' //Make it a snapshot again when we figure out shrinking?
 targetCompatibility = '1.7'
 sourceCompatibility = '1.7'
 
@@ -45,16 +45,16 @@ task sourcesJar(type: Jar, dependsOn: classes) {
     from sourceSets.main.allSource
 }
 
-/*
 task fatJar(type: Jar, dependsOn: jar) {
     doFirst { from zipTree(jar.archivePath) }
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     classifier = 'fatjar'
     inputs.file jar.archivePath
-    from(configurations.compile.collect { zipTree(it).matching { include '** /*.class' } })
+    from(configurations.compile.collect { zipTree(it).matching { include '**/*.class' } })
     manifest { attributes 'Main-Class': main_class }
 }
 
+/*
 task shrinkJar(type: proguard.gradle.ProGuardTask, dependsOn: fatJar) {
     inputs.file fatJar.archivePath
     ext {
@@ -79,9 +79,9 @@ Need to figure out how to get proguard to work right so we can shrink the jar...
 
 artifacts {
     archives sourcesJar
-    //archives shrunkJar
+    archives fatJar
 }
-configurations.runtime.artifacts.removeAll { it.archiveTask.is fatJar }
+//configurations.runtime.artifacts.removeAll { it.archiveTask.is fatJar }
 
 jar {
     manifest { attributes 'Main-Class': main_class }
