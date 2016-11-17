@@ -1,22 +1,27 @@
 package net.minecraftforge.remapper;
 
-import java.awt.*;
-import java.awt.event.*;
-import javax.swing.*;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
-
 import com.google.common.collect.Lists;
 
 import net.minecraftforge.remapper.RemapperTask.IProgressListener;
 
-import java.io.*;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.ItemEvent;
+import java.awt.event.ItemListener;
+import java.io.File;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 
+import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+
 public class RemapperGUI {
+    private static final int MARGIN = 15;
+
     static boolean IS_WINDOWS = System.getProperty("os.name").toLowerCase().contains("windows");
     private JFrame mainFrame;
     private JLabel status;
@@ -42,63 +47,237 @@ public class RemapperGUI {
         mainFrame = new JFrame("Java Source Remapper");
         mainFrame.setSize(500, 500);
 
+        /*
+         * +---------------------+
+         * |Folder and load info |
+         * |                     |
+         * +----------+----------+
+         * |   Deps   | Sources  |
+         * |          |          |
+         * |          |          |
+         * +----------+----------+
+         * |          |cache dir |
+         * |mcver+old  newmapping|
+         * |map.+btns   buttons  |
+         * +----------+----------+
+         *
+         */
+        JPanel mainPanel = new JPanel();
+        mainPanel.setLayout(new GridBagLayout());
+
+        GridBagConstraints constraints = new GridBagConstraints();
+
+        JComponent folderAndLoadInfo = createFolderAndLoadInfoComponent();
+        constraints.gridx = 0;
+        constraints.gridy = 0;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 2;
+        constraints.gridheight = 2;//2 units high
+        constraints.weighty = 0;
+        constraints.weightx = 1.0;
+        constraints.insets = new Insets(MARGIN, MARGIN, 0, MARGIN);
+        mainPanel.add(folderAndLoadInfo, constraints);
+
+        JComponent dependencies = createDependenciesComponent();
+        constraints.gridx = 0;
+        constraints.gridy = 2;
+        constraints.fill = GridBagConstraints.BOTH;
+        constraints.gridwidth = 1;
+        constraints.gridheight = 3;//3 units high
+        constraints.weighty = 1.0;
+        constraints.weightx = 1.0;
+        constraints.insets = new Insets(5, MARGIN, 5, 5);
+        mainPanel.add(dependencies, constraints);
+
+        JComponent sources = createSourcesComponent();
+        constraints.gridx = 1;
+        constraints.gridy = 2;
+        constraints.fill = GridBagConstraints.BOTH;
+        constraints.gridwidth = 1;
+        constraints.gridheight = 3;//3 units high
+        constraints.weighty = 1.0;
+        constraints.weightx = 1.0;
+        constraints.insets = new Insets(5, 5, 5, MARGIN);
+        mainPanel.add(sources, constraints);
+
+        JComponent mappingsSelectionLeft = createMappingsSelectionLeft();
+        constraints.gridx = 0;
+        constraints.gridy = 5;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 1;
+        constraints.gridheight = 2;
+        constraints.weighty = 0;
+        constraints.weightx = 1.0;
+        constraints.insets = new Insets(5, MARGIN, 20, 5);
+        mainPanel.add(mappingsSelectionLeft, constraints);
+
+        JComponent mappingsSelectionRight = createMappingsSelectionRight();
+        constraints.gridx = 1;
+        constraints.gridy = 5;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 1;
+        constraints.gridheight = 2;
+        constraints.weighty = 0;
+        constraints.weightx = 1.0;
+        constraints.insets = new Insets(5, 5, 20, MARGIN);
+        mainPanel.add(mappingsSelectionRight, constraints);
+
+        mainFrame.getContentPane().add(mainPanel, BorderLayout.CENTER);
+        mainFrame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        mainFrame.setLocationRelativeTo(null);
+        mainFrame.setMinimumSize(new Dimension(440, 320));
+        mainFrame.setVisible(true);
+
+        MappingDownloader.downloadMappingList(new Runnable(){
+            @Override
+            public void run() {
+                updateGuiState();
+            }
+        });
+    }
+
+    private JComponent createFolderAndLoadInfoComponent() {
+        Box box = Box.createVerticalBox();
         //==================================================
         // Folder select
-        JPanel folderSelect = new JPanel();
-        folderSelect.setLayout(new FlowLayout());
-        folderSelect.add(new JLabel("Project Folder:"));
-        folderSelect.add(createBrowseBox(25, new IBrowseListener() {
-            @Override public File getValue() { return targetDir; }
-            @Override public void setValue(File value) { targetDir = value; }
-        }));
-        folderSelect.setMaximumSize(folderSelect.getPreferredSize());
-        folderSelect.setMinimumSize(folderSelect.getPreferredSize());
+        JPanel folderSelect = createFolderSelectionComponent();
         //=====================================================
         status = new JLabelMax("Select Folder!", SwingConstants.CENTER);
         status.setOpaque(true);
         //=====================================================
         JPanel buttonList = new JPanel();
-        folderSelect.setLayout(new FlowLayout());
         btnGetModInfo = new JButton("Load Info");
         btnGetModInfo.setEnabled(false);
         btnGetModInfo.setToolTipText("Load information from a build.gradle");
         btnGetModInfo.addActionListener(new GatherModInfo(this));
         buttonList.add(btnGetModInfo);
-        buttonList.setMaximumSize(buttonList.getPreferredSize());
-        buttonList.setMinimumSize(buttonList.getPreferredSize());
         //=====================================================
+        box.add(folderSelect);
+        box.add(status);
+        box.add(buttonList);
+
+        return box;
+    }
+
+    private JPanel createFolderSelectionComponent() {
+        JPanel folderSelect = new JPanel();
+        folderSelect.setLayout(new GridBagLayout());
+
+        GridBagConstraints constraints = new GridBagConstraints();
+
+        constraints.gridx = 0;
+        folderSelect.add(new JLabel("Project Folder:"), constraints);
+
+        constraints.gridx = 1;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.weightx = 1.0;
+        folderSelect.add(createBrowseBox(25, new IBrowseListener() {
+            @Override public File getValue() { return targetDir; }
+            @Override public void setValue(File value) { targetDir = value; }
+        }), constraints);
+        return folderSelect;
+    }
+
+    private JComponent createDependenciesComponent() {
+        Box depBox = Box.createVerticalBox();
+
+        depBox.add(new JLabelMax("Dependencies:", JLabel.LEADING));
+
         JList<File> depList = new JList<File>(this.deps);
         depList.setCellRenderer(new FileListRenderer());
-        depList.setSize(40, 50);
-        Box box = Box.createHorizontalBox();
-        box.add(new JLabelMax("Dependancies:", JLabel.LEADING));
-        box.add(Box.createHorizontalGlue());
-        Box depBox = Box.createVerticalBox();
-        depBox.add(box);
+
         depBox.add(new JScrollPane(depList));
         depBox.setMinimumSize(new Dimension(225, 200));
-        depBox.setMaximumSize(depBox.getMinimumSize());
+
+        return depBox;
+    }
+
+    private JComponent createSourcesComponent() {
+        Box srcBox = Box.createVerticalBox();
+
+        srcBox.add(new JLabelMax("Sources:", JLabel.LEADING));
 
         JList<File> srcList = new JList<File>(this.srcs);
         srcList.setCellRenderer(new FileListRenderer());
-        box = Box.createHorizontalBox();
-        box.add(new JLabelMax("Sources:", JLabel.LEADING));
-        box.add(Box.createHorizontalGlue());
-        Box srcBox = Box.createVerticalBox();
-        srcBox.add(box);
+
         srcBox.add(new JScrollPane(srcList));
         srcBox.setMinimumSize(new Dimension(225, 200));
-        srcBox.setMaximumSize(srcBox.getMinimumSize());
 
-        Box lists = Box.createHorizontalBox();
-        lists.add(depBox);
-        lists.add(Box.createRigidArea(new Dimension(10, 0)));
-        lists.add(srcBox);
-        //=====================================================
-        Box[] left = new Box[]{Box.createVerticalBox(), Box.createVerticalBox()};
-        left[0].add(makeLabel("Minecraft: "));
-        left[0].add(Box.createRigidArea(new Dimension(10, 10))); //Annoying but needed cuz labels are smaller then text/lists
-        left[1].add(this.jmcVersion = new JComboBox<String>());
+        return srcBox;
+    }
+
+    private JComponent createMappingsSelectionLeft() {
+
+        /*
+         *     2    :      3
+         * +--------+------------+
+         * |MC Ver  |Select      |
+         * +--------+------------+
+         * |Old:    |Select      |
+         * +--------+------------+
+         * |        |    Download|
+         * +--------+------------+
+         */
+        JPanel panel = new JPanel();
+        panel.setLayout(new GridBagLayout());
+
+        GridBagConstraints constraints = new GridBagConstraints();
+
+        JComponent minecraftVersionLabel = makeLabel("Minecraft: ");
+        constraints.gridx = 0;
+        constraints.gridy = 0;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 2;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 0;
+        panel.add(minecraftVersionLabel, constraints);
+
+        JComponent selectMinecraftVersion = createSelectMcVersionComponent();
+        constraints.gridx = 2;
+        constraints.gridy = 0;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 3;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 1.0;
+        panel.add(selectMinecraftVersion, constraints);
+
+        JComponent oldMappingsLabel = makeLabel("Old: ");
+        constraints.gridx = 0;
+        constraints.gridy = 1;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 2;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 0;;
+        panel.add(oldMappingsLabel, constraints);
+
+        JComponent oldMappingsSelection = createOldMappingsSelection();
+        constraints.gridx = 2;
+        constraints.gridy = 1;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 3;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 1.0;
+        panel.add(oldMappingsSelection, constraints);
+
+        JComponent downloadOldButton = createDownloadOldButton();
+        constraints.gridx = 2;
+        constraints.gridy = 2;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 3;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 0;
+        panel.add(downloadOldButton, constraints);
+
+        return panel;
+    }
+
+    private JComponent createSelectMcVersionComponent() {
+        this.jmcVersion = new JComboBox<String>();
         this.jmcVersion.setEnabled(false);
         this.jmcVersion.addItemListener(new ItemListener(){
             @Override
@@ -109,8 +288,11 @@ public class RemapperGUI {
                 updateGuiState();
             }
         });
-        left[0].add(makeLabel("Old: "));
-        left[1].add(this.joldMapping = new JComboBox<String>());
+        return this.jmcVersion;
+    }
+
+    private JComponent createOldMappingsSelection() {
+        this.joldMapping = new JComboBox<String>();
         this.joldMapping.addItemListener(new ItemListener(){
             @Override
             public void itemStateChanged(ItemEvent e) {
@@ -121,8 +303,14 @@ public class RemapperGUI {
             }
         });
         this.joldMapping.setEnabled(false);
-        left[0].add(Box.createGlue());
-        left[1].add(this.jDownloadOld = new JButton("Download"));
+        return this.joldMapping;
+    }
+
+    private JComponent createDownloadOldButton() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BorderLayout());
+
+        this.jDownloadOld = new JButton("Download");
         this.jDownloadOld.setEnabled(false);
         this.jDownloadOld.addActionListener(new ActionListener(){
             @Override
@@ -141,15 +329,96 @@ public class RemapperGUI {
             }
         });
 
-        Box[] right = new Box[]{Box.createVerticalBox(), Box.createVerticalBox()};
-        right[0].add(makeLabel("Cache Dir: "));
-        right[0].add(Box.createRigidArea(new Dimension(10, 10))); //Annoying but needed cuz labels are smaller then text/lists
-        right[1].add(createBrowseBox(15, new IBrowseListener() {
+        panel.add(this.jDownloadOld, BorderLayout.EAST);
+        return panel;
+    }
+
+    private JComponent createMappingsSelectionRight() {
+        /*
+         *     2    :      3
+         * +--------+------------+
+         * |CacheDir|Text And Btn|
+         * +--------+------------+
+         * |New:    |Select      |
+         * +--------+------------+
+         * |        |    Download|
+         * +--------+------------+
+         * |        | start remap|
+         * +--------+------------+
+         */
+        JPanel panel = new JPanel();
+        panel.setLayout(new GridBagLayout());
+
+        GridBagConstraints constraints = new GridBagConstraints();
+
+        JComponent cacheDirLabel = makeLabel("Cache Dir: ");
+        constraints.gridx = 0;
+        constraints.gridy = 0;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 2;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 0;
+        panel.add(cacheDirLabel, constraints);
+
+        JComponent cacheDirBrowse = createBrowseBox(15, new IBrowseListener() {
             @Override public File getValue() { return cacheDir; }
             @Override public void setValue(File value) { cacheDir = value; }
-        }));
-        right[0].add(makeLabel("New:"));
-        right[1].add(this.jnewMapping = new JComboBox<String>());
+        });
+        constraints.gridx = 2;
+        constraints.gridy = 0;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 3;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 1.0;
+        panel.add(cacheDirBrowse, constraints);
+
+        JComponent newMappingsLabel = makeLabel("New:");
+        constraints.gridx = 0;
+        constraints.gridy = 1;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 2;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 0;
+        panel.add(newMappingsLabel, constraints);
+
+        JComponent newMappingSelection = createNewMappingsSelection();
+        constraints.gridx = 2;
+        constraints.gridy = 1;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 3;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 1.0;
+        panel.add(newMappingSelection, constraints);
+
+        JComponent downloadButton = createDownloadButton();
+        constraints.gridx = 2;
+        constraints.gridy = 2;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 3;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 0;
+        panel.add(downloadButton, constraints);
+
+        JComponent startRemapButton = createRemapButton();
+        constraints.gridx = 2;
+        constraints.gridy = 3;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.gridwidth = 3;
+        constraints.gridheight = 1;
+        constraints.weighty = 0;
+        constraints.weightx = 0;
+        panel.add(startRemapButton, constraints);
+
+        return panel;
+    }
+
+    private JComponent createNewMappingsSelection() {
+        this.jnewMapping = new JComboBox<String>();
         this.jnewMapping.addItemListener(new ItemListener(){
             @Override
             public void itemStateChanged(ItemEvent e) {
@@ -160,8 +429,15 @@ public class RemapperGUI {
             }
         });
         this.jnewMapping.setEnabled(false);
-        right[0].add(Box.createGlue());
-        right[1].add(createHorizontalBox(Box.createGlue(), this.jDownloadNew = new JButton("Download")));
+
+        return this.jnewMapping;
+    }
+
+    private JComponent createDownloadButton() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BorderLayout());
+
+        this.jDownloadNew = new JButton("Download");
         this.jDownloadNew.setEnabled(false);
         this.jDownloadNew.addActionListener(new ActionListener(){
             @Override
@@ -179,8 +455,16 @@ public class RemapperGUI {
                 jDownloadNew.setEnabled(false);
             }
         });
-        //=====================================================
-        right[1].add(createHorizontalBox(Box.createGlue(), this.btnRemapMod = new JButton("Start Remap")));
+
+        panel.add(this.jDownloadNew, BorderLayout.EAST);
+        return panel;
+    }
+
+    private JComponent createRemapButton() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BorderLayout());
+
+        this.btnRemapMod = new JButton("Start Remap");
         this.btnRemapMod.setEnabled(false);
         this.btnRemapMod.addActionListener(new ActionListener(){
             @Override
@@ -194,46 +478,8 @@ public class RemapperGUI {
             }
         });
 
-        //=====================================================
-
-        Box infoBox = Box.createHorizontalBox();
-        Box t = createHorizontalBox(left[0], left[1]);
-        t.setMaximumSize(new Dimension(225, t.getPreferredSize().height));
-        infoBox.add(t);
-        infoBox.add(Box.createRigidArea(new Dimension(12, 10)));
-        t = createHorizontalBox(right[0], right[1]);
-        t.setMaximumSize(new Dimension(225, t.getPreferredSize().height));
-        infoBox.add(t);
-        //=====================================================
-
-
-        Box mainPanel = Box.createVerticalBox();
-        mainPanel.add(folderSelect);
-        mainPanel.add(status);
-        mainPanel.add(buttonList);
-        mainPanel.add(lists);
-        mainPanel.add(infoBox);
-
-
-        mainFrame.getContentPane().add(mainPanel, BorderLayout.CENTER);
-        mainFrame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        mainFrame.setLocationRelativeTo(null);
-        mainFrame.setMinimumSize(new Dimension(mainFrame.getWidth(), mainFrame.getHeight()));
-        mainFrame.setVisible(true);
-
-        MappingDownloader.downloadMappingList(new Runnable(){
-            @Override
-            public void run() {
-                updateGuiState();
-            }
-        });
-    }
-
-    private Box createHorizontalBox(Component... parts) {
-        Box ret = Box.createHorizontalBox();
-        for(Component c : parts)
-            ret.add(c);
-        return ret;
+        panel.add(this.btnRemapMod, BorderLayout.EAST);
+        return panel;
     }
 
     private void updateMCVersionList() {
@@ -449,7 +695,7 @@ public class RemapperGUI {
     }
 
     private JComponent createBrowseBox(int columns, final IBrowseListener listener) {
-        final JTextField text = new JTextField(columns);
+        final JTextField text = new JTextField();
         text.getDocument().addDocumentListener(new DocChangeListener(text) {
             @Override
             protected void update() {
