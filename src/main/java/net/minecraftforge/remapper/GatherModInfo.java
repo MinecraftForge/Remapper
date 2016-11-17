@@ -1,6 +1,10 @@
 package net.minecraftforge.remapper;
 
-import java.awt.Color;
+import com.google.common.base.Splitter;
+import com.google.common.collect.Lists;
+import com.google.common.io.Files;
+
+import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.BufferedReader;
@@ -10,10 +14,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.List;
 
-import javax.swing.JOptionPane;
-
-import com.google.common.base.Splitter;
-import com.google.common.io.Files;
+import javax.swing.*;
 
 class GatherModInfo implements ActionListener, Runnable {
     private final RemapperGUI remapperGUI;
@@ -32,8 +33,9 @@ class GatherModInfo implements ActionListener, Runnable {
             return;
         }
         try {
-            if (!(new File(dir, RemapperGUI.IS_WINDOWS ? "gradlew.bat" : "gradlew.sh").exists())) {
-                JOptionPane.showMessageDialog(null, "This setup must contain the gradle wrapper! So we can run a build and gather information.", "ERROR", JOptionPane.ERROR_MESSAGE);
+            File gradlew = getGradleWrapper(dir);
+            if (gradlew == null) {
+                JOptionPane.showMessageDialog(null, "This setup must contain the gradle wrapper (gradlew.bat on windows, gradlew or gradlew.sh otherwise)! So we can run a build and gather information.", "ERROR", JOptionPane.ERROR_MESSAGE);
                 return;
             }
 
@@ -65,7 +67,7 @@ class GatherModInfo implements ActionListener, Runnable {
             this.remapperGUI.srcs.clear();
 
             Splitter SPLITTER = Splitter.on(": ").limit(2);
-            ProcessBuilder pb = new ProcessBuilder(RemapperGUI.IS_WINDOWS ? "./gradlew.bat" : "./gradlew.sh",
+            ProcessBuilder pb = new ProcessBuilder(gradlew.getPath(),
                     "--build-file", "REMAP_MOD_TEMP.gradle", "remapGetInfo");
             pb.directory(dir);
             Process p = pb.start();
@@ -108,6 +110,24 @@ class GatherModInfo implements ActionListener, Runnable {
             e1.printStackTrace();
         }
     }
+
+    private File getGradleWrapper(File dir) {
+        for(String filename : getPossibleGradleWrapperFiles()) {
+            if(new File(dir, filename).exists()) {
+                return new File(dir, filename);
+            }
+        }
+        return null;
+    }
+
+    private List<String> getPossibleGradleWrapperFiles() {
+        if(RemapperGUI.IS_WINDOWS) {
+            return Lists.newArrayList("gradlew.bat");
+        } else {
+            return Lists.newArrayList("gradlew", "gradlew.sh");
+        }
+    }
+
     private void println(final String line) {
         System.out.println(line);
         this.remapperGUI.setStatus(line, Color.BLACK).run();
