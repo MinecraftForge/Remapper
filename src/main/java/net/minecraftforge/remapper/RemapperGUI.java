@@ -29,6 +29,7 @@ public class RemapperGUI {
     File targetDir = new File(".");
     ListModel<File> deps = new ListModel<File>();
     ListModel<File> srcs = new ListModel<File>();
+    public boolean buildFailed;
 
     File cacheDir = new File(".");
     private JComboBox<String> jmcVersion;
@@ -532,6 +533,11 @@ public class RemapperGUI {
             r.run();
         if (!new File(targetDir, "build.gradle").exists()) {
             status.setText("build.gradle missing in taget dir!");
+            status.setForeground(Color.RED);
+            btnGetModInfo.setEnabled(false);
+        }
+        else if (this.buildFailed) {
+            status.setText("gradle task failed!");
             status.setForeground(Color.RED);
             btnGetModInfo.setEnabled(false);
         }

@@ -63,6 +63,7 @@ class GatherModInfo implements ActionListener, Runnable {
             }
             fos.close();
 
+            this.remapperGUI.buildFailed = false;
             this.remapperGUI.deps.clear();
             this.remapperGUI.srcs.clear();
 
@@ -72,6 +73,7 @@ class GatherModInfo implements ActionListener, Runnable {
             pb.directory(dir);
             Process p = pb.start();
             BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            BufferedReader err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
             String line = null;
             while ((line = br.readLine()) != null) {
                 //println(line);
@@ -102,9 +104,18 @@ class GatherModInfo implements ActionListener, Runnable {
                     this.remapperGUI.updateGuiState();
                 }
             }
+            while((line = err.readLine()) != null) {
+                if(line.startsWith("BUILD FAILED") || line.startsWith("FAILURE")) {
+                    this.remapperGUI.buildFailed = true;
+                    this.remapperGUI.updateGuiState();
+                    break;
+                }
+            }
             if (temp_build.exists())
                 temp_build.delete();
-            println("Gradle Build finished");
+            if(!remapperGUI.buildFailed) {
+                println("Gradle Build finished");
+            }
         } catch (IOException e1) {
             // TODO Auto-generated catch block
             e1.printStackTrace();
