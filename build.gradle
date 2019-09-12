@@ -6,11 +6,16 @@ buildscript {
         classpath 'net.sf.proguard:proguard-gradle:5.2.1'
     }
 }
-
-apply plugin: 'maven'
-apply plugin: 'java'
-apply plugin: 'eclipse'
-apply plugin: 'idea'
+plugins {
+    id 'java'
+    id 'eclipse'
+    id 'idea'
+    id 'maven-publish'
+    id 'net.minecrell.licenser' version '0.4.1'
+    id 'org.ajoberstar.grgit' version '3.1.1'
+    id 'com.github.ben-manes.versions' version '0.24.0'
+    id 'com.github.johnrengelman.shadow' version '5.1.0'
+}
 
 
 repositories {
@@ -27,17 +32,43 @@ repositories {
 
 group = 'net.minecraftforge'
 archivesBaseName = 'remapper'
-version = '0.1' //Make it a snapshot again when we figure out shrinking?
-targetCompatibility = '1.7'
-sourceCompatibility = '1.7'
+version = gitVersion()
+targetCompatibility = sourceCompatibility = compileJava.sourceCompatibility = compileJava.targetCompatibility = '1.8'
+def gitVersion() {
+    def raw = grgit.describe(longDescr: true, tags:true)
+    def desc = (raw == null ? 'unknown-offset-hash' : raw).split('-') as List
+    def hash = desc.remove(desc.size() - 1)
+    def offset = desc.remove(desc.size() - 1)
+    def tag = desc.join('-')
+    def branch = grgit.branch.current().name
+    project.ext.SPEC_VERSION = tag
+    return "${tag}.${offset}${t -> if (branch != 'master') t << '-' + branch}"
+}
 
-ext.main_class = 'net.minecraftforge.remapper.RemapperMain'
+ext {
+    CHANGELOG = rootProject.file('build/changelog.txt')
+    MAIN_CLASS = 'net.minecraftforge.remapper.RemapperMain'
+    MANIFEST = manifest{
+        attributes('Main-Class': MAIN_CLASS)
+        attributes([
+            'Specification-Title':      'DePigifier',
+            'Specification-Vendor':     'Forge Development LLC',
+            'Specification-Version':    project.version,
+            'Implementation-Title':     'DePigifier',
+            'Implementation-Version':   project.version,
+            'Implementation-Vendor':    'Forge Development LLC'
+        ] as LinkedHashMap, 'net/minecraftforge/depigifier/')
+    }
+}
 
 dependencies {
     compile 'net.sf.jopt-simple:jopt-simple:4.5'
-    compile 'com.google.guava:guava:14.0'
     compile 'com.google.code.gson:gson:2.7'
-    compile 'net.minecraftforge.srg2source:Srg2Source:4.0-SNAPSHOT'
+    compile 'de.siegmar:fastcsv:1.0.3'
+    compile('net.minecraftforge:Srg2Source:5.0.+:fatjar'){
+        transitive = false
+    }
+    compile 'net.minecraftforge:srgutils:0.2.+'
 }
 
 task sourcesJar(type: Jar, dependsOn: classes) {
@@ -45,13 +76,21 @@ task sourcesJar(type: Jar, dependsOn: classes) {
     from sourceSets.main.allSource
 }
 
-task fatJar(type: Jar, dependsOn: jar) {
-    doFirst { from zipTree(jar.archivePath) }
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    classifier = 'fatjar'
-    inputs.file jar.archivePath
-    from(configurations.compile.collect { zipTree(it).matching { include '**/*.class' } })
-    manifest { attributes 'Main-Class': main_class }
+jar {
+    manifest.from(MANIFEST)
+}
+
+shadowJar {
+    classifier 'fatjar'
+    manifest.from(MANIFEST)
+}
+build.dependsOn shadowJar
+
+license {
+    header = file('LICENSE-header.txt')
+    ext {
+        projectName = 'Remapper'
+    }
 }
 
 /*
@@ -79,63 +118,68 @@ Need to figure out how to get proguard to work right so we can shrink the jar...
 
 artifacts {
     archives sourcesJar
-    archives fatJar
+    archives shadowJar
 }
 //configurations.runtime.artifacts.removeAll { it.archiveTask.is fatJar }
 
-jar {
-    manifest { attributes 'Main-Class': main_class }
-}
-
-uploadArchives {
-    repositories {
-        add getProject().repositories.mavenLocal()
-    }
-    repositories.mavenDeployer {
-	
-        if (project.hasProperty('forgeMavenPass')) {
-            logger.info('Publishing to files server')
-            repository(url: "http://files.minecraftforge.net/maven/manage/upload") {
-                authentication(userName: "forge", password: project.getProperty('forgeMavenPass'))
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            if (CHANGELOG.exists()) {
+                artifact(CHANGELOG) {
+                    classifier = 'changelog'
+                }
             }
-        } else {
-            logger.info('Publishing to repo folder')
-            repository(url: 'file://localhost/' + project.file('repo').getAbsolutePath())
-        }
+            artifact jar
+            artifact shadowJar
+            
+            pom {
+                name = project.archivesBaseName
+                description = 'Srg2Source remapper'
+                url = 'https://github.com/MinecraftForge/Remapper'
 
-        pom {
-            groupId = project.group
-            version = project.version
-            artifactId = project.archivesBaseName
-        }
-        pom.project {
-            name project.archivesBaseName
-            packaging 'jar'
-            description 'Srg2Source remapper'
-            url 'https://github.com/MinecraftForge/Remapper'
+                scm {
+                    url = 'https://github.com/MinecraftForge/Remapper'
+                    connection = 'scm:git:git://github.com/MinecraftForge/Remapper.git'
+                    developerConnection = 'scm:git:git@github.com:MinecraftForge/Remapper.git'
+                }
 
-            scm {
-                url 'https://github.com/MinecraftForge/Remapper'
-                connection 'scm:git:git://github.com/MinecraftForge/Remapper.git'
-                developerConnection 'scm:git:git@github.com:MinecraftForge/Remapper.git'
-            }
+                issueManagement {
+                    system = 'github'
+                    url = 'https://github.com/MinecraftForge/Remapper/issues'
+                }
 
-            issueManagement {
-                system 'github'
-                url 'https://github.com/MinecraftForge/Remapper/issues'
-            }
+                licenses {
+                    license {
+                        name = 'LGPLv2.1'
+                        url = 'https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt'
+                    }
+                }
 
-            developers {
-                developer {
-                    id 'LexManos'
-                    name 'Lex Manos'
-                    roles { role 'developer' }
+                developers {
+                    developer {
+                        id = 'LexManos'
+                        name = 'LexManos'
+                    }
                 }
             }
         }
     }
+    repositories {
+        maven {
+            if (project.hasProperty('forgeMavenPassword')) {
+                credentials {
+                    username project.properties.forgeMavenUser
+                    password project.properties.forgeMavenPassword
+                }
+                url 'https://files.minecraftforge.net/maven/manage/upload'
+            } else {
+                url 'file://' + rootProject.file('repo').getAbsolutePath()
+            }
+        }
+    }
 }
 
-task wrapper(type: Wrapper) {
-    gradleVersion = '2.9'
+wrapper {
+    gradleVersion = '5.5'
 }

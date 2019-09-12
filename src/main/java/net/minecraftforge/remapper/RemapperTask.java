@@ -1,35 +1,61 @@
+/*
+ * Remapper
+ * Copyright (c) 2016-2019.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation version 2.1
+ * of the License.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
 package net.minecraftforge.remapper;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.PrintStream;
-import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
-import com.google.common.base.Charsets;
-import com.google.common.base.Joiner;
-import com.google.common.base.Splitter;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
-import com.google.common.io.Files;
-import joptsimple.internal.Strings;
-import net.minecraftforge.srg2source.ast.RangeExtractor;
-import net.minecraftforge.srg2source.rangeapplier.ExceptorFile;
-import net.minecraftforge.srg2source.rangeapplier.MethodData;
+import de.siegmar.fastcsv.reader.CsvContainer;
+import de.siegmar.fastcsv.reader.CsvReader;
+import net.minecraftforge.srg2source.api.RangeApplierBuilder;
+import net.minecraftforge.srg2source.api.RangeExtractorBuilder;
 import net.minecraftforge.srg2source.rangeapplier.RangeApplier;
-import net.minecraftforge.srg2source.rangeapplier.SrgContainer;
+import net.minecraftforge.srgutils.IMappingFile;
+import net.minecraftforge.srgutils.IMappingFile.IField;
+import net.minecraftforge.srgutils.IMappingFile.IMethod;
+import net.minecraftforge.srgutils.IRenamer;
 
 public class RemapperTask {
+    @FunctionalInterface
     public static interface IProgressListener {
         void writeLine(String line);
-
     }
+    private static final IProgressListener NULL = (l) -> {};
 
     public static void runRemapMod(final List<File> deps, final List<File> srcs, final String mcVersion,
             final String oldMapping, final String newMapping, final File cacheDir, final IProgressListener listener) {
@@ -42,63 +68,24 @@ public class RemapperTask {
     }
 
     public static void runRemapMod_Thread(final List<File> deps, final List<File> srcs, final String mcVersion,
-            final String oldMapping, final String newMapping, final File cacheDir, final IProgressListener listener) {
+            final String oldMapping, final String newMapping, final File cache, final IProgressListener listener) {
+
         if (extractRange(deps, srcs, listener)) {
-            final Map<String, String> excs = Maps.newHashMap();
-            SrgContainer srg = createSrg(mcVersion, oldMapping, newMapping, cacheDir, excs, listener);
-
-            if (listener != null)
-                listener.writeLine("Loading EXC file");
-            try {
-                for (String line : Files.readLines(MappingDownloader.getMcp(mcVersion, cacheDir, "joined.exc"), Charsets.UTF_8)) {
-                    if (line.indexOf('=') != -1) {
-                        String[] pts = line.split("=");
-                        excs.put(pts[0], pts[1]);
-                    }
-                }
-            } catch (IOException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
-
-            ExceptorFile exc = new ExceptorFile(){
-                {
-                    for (Map.Entry<String, String> e : excs.entrySet()) {
-                        ExcLine line = super.parseLine(e.getKey() + "=" + e.getValue());
-                        if (line != null)
-                            this.add(line);
-                    }
-                }
-            };
+            File srg = createSrg(mcVersion, oldMapping, newMapping, cache, listener);
+            File exc = createExc(mcVersion, oldMapping, newMapping, cache, listener);
 
             applyRemap(srg, exc, deps, srcs, listener);
         }
     }
 
     private static boolean extractRange(final List<File> deps, final List<File> srcs, final IProgressListener listener) {
-        RangeExtractor extractor = new RangeExtractor();
+        RangeExtractorBuilder builder = new RangeExtractorBuilder().batch();
+        deps.forEach(builder::library);
+        srcs.forEach(builder::input);
 
-        for (File dep : deps)
-            extractor.addLibs(dep);
+        boolean worked = false;
 
-
-        final Map<String, String> files = Maps.newHashMap();
-        for (File src : srcs) {
-            String root = src.getAbsolutePath();
-            for (File f : Files.fileTreeTraverser().preOrderTraversal(src)) {
-                if (f.isDirectory())
-                    continue;
-                String relative = f.getAbsolutePath().substring(root.length() + 1);
-                files.put(relative, root);
-            }
-        }
-
-        extractor.setSrc(new SourcesSupplier(srcs));
-
-        PrintStream log = null;
-        PrintWriter map = null;
-        try {
-            log = new PrintStream("./ExtractRange.log"){
+        try (PrintStream log = new PrintStream("./ExtractRange.log") {
                 private int total = 1;
                 private int current = 0;
 
@@ -116,21 +103,16 @@ public class RemapperTask {
                     }
                     super.println(x);
                 }
-            };
-            map = new PrintWriter(new BufferedWriter(new FileWriter("./ExtractRange.txt")));
-            extractor.setOutLogger(log);
+            }) {
+
+            builder.logger(log);
+            builder.output(new File("./ExtractRange.txt"));
+
+            worked = builder.build().run();
         } catch (FileNotFoundException e) {
             e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
+            return false;
         }
-
-        boolean worked = extractor.generateRangeMap(map);
-
-        if (log != null)
-            log.close();
-        if (map != null)
-            map.close();
 
         if (listener != null)
             listener.writeLine("Extracting Range Complete!");
@@ -138,158 +120,279 @@ public class RemapperTask {
         return worked;
     }
 
-    private static SrgContainer createSrg(String mcVersion, String oldMapping, String newMapping, File cache, Map<String, String> excs, IProgressListener listener) {
-        Map<String, String> mold = Maps.newHashMap();
-        Map<String, String> mnew = Maps.newHashMap();
-
-        if (listener != null)
-            listener.writeLine("Loading Old Mapping");
-        for (File f : MappingDownloader.getCsvs(oldMapping, cache))
-            loadCSV(f, mold);
-        if (listener != null)
-            listener.writeLine("Loading New Mapping");
-        for (File f : MappingDownloader.getCsvs(newMapping, cache))
-            loadCSV(f, mnew);
-
-        SrgContainer ret = new SrgContainer();
+    private static File createSrg(String mcVersion, String oldMapping, String newMapping, File cache, IProgressListener listener) {
+        if (listener == null)
+            listener = NULL;
         try {
-            if (listener != null)
-                listener.writeLine("Loading Statics File");
-            Set<String> statics = Sets.newHashSet();
-            statics.addAll(Files.readLines(MappingDownloader.getMcp(mcVersion, cache, "static_methods.txt"), Charsets.UTF_8));
+            listener.writeLine("Loading SRG File");
 
-            Joiner COMMA = Joiner.on(',');
+            File mcpMapping = new File(MappingDownloader.getMcpRoot(mcVersion, cache), "obf_to_srg.tsrg");
+            if (!mcpMapping.exists()) {
+                byte[] data = MappingDownloader.getMcpData(mcVersion, cache, "mappings", false);
+                Files.write(mcpMapping.toPath(), data);
+            }
 
-            if (listener != null)
-                listener.writeLine("Loading SRG File");
-            for (String line : Files.readLines(MappingDownloader.getMcp(mcVersion, cache, "joined.srg"), Charsets.UTF_8)) {
-                if (Strings.isNullOrEmpty(line) || line.startsWith("#"))
-                    continue;
+            File oldToNewF = "SRG".equals(oldMapping) ? new File(MappingDownloader.getMcpRoot(mcVersion, cache), "srg_to_" + newMapping + ".tsrg") :
+                             "SRG".equals(newMapping) ? new File(MappingDownloader.getMappingRoot(oldMapping, cache), oldMapping + "_to_srg.tsrg") :
+                                                        new File(MappingDownloader.getMappingRoot(oldMapping, cache), oldMapping + "_to_" + newMapping + ".tsrg");
+            if (!oldToNewF.exists()) {
+                listener.writeLine("Creating SRG to SRG");
+                File srgToSrgF = new File(MappingDownloader.getMcpRoot(mcVersion, cache), "srg_to_srg.tsrg");
+                IMappingFile srgToSrg = null;
+                if (srgToSrgF.exists()) {
+                    srgToSrg = IMappingFile.load(srgToSrgF);
+                } else {
+                    IMappingFile obfToSrg = IMappingFile.load(mcpMapping).reverse();
 
-                String[] pts = line.split(" ");
-                if ("PK:".equals(pts[0])) {
-                    ret.packageMap.put(pts[1], pts[2]);
+                    listener.writeLine("Creating SRG to OBF");
+                    File srgToObfF = new File(MappingDownloader.getMcpRoot(mcVersion, cache), "srg_to_obf.tsrg");
+                    IMappingFile srgToObf = null;
+                    if (srgToObfF.exists()) {
+                        srgToObf = IMappingFile.load(srgToObfF);
+                    } else {
+                        srgToObf = obfToSrg.reverse();
+                        srgToObf.write(srgToObfF.toPath(), IMappingFile.Format.TSRG, false);
+                    }
+
+                    srgToSrg = srgToObf.chain(obfToSrg);
+                    srgToSrg.write(srgToSrgF.toPath(), IMappingFile.Format.TSRG, false);
                 }
-                else if ("CL:".equals(pts[0])) {
-                    ret.classMap.put(pts[1], pts[2]);
-                }
-                else if ("FD:".equals(pts[0])) {
-                    String cls = pts[2].substring(0, pts[2].lastIndexOf('/') + 1);
-                    String fd = pts[2].substring(cls.length());
-                    String o = mold.get(fd);
-                    String n = mnew.get(fd);
-                    if (o == null) o = fd;
-                    if (n == null) n = fd;
-                    ret.fieldMap.put(cls + o, cls + n);
-                }
-                else if ("MD:".equals(pts[0])) {
-                    String cls = pts[3].substring(0, pts[3].lastIndexOf('/') + 1);
-                    String md = pts[3].substring(cls.length());
-                    String o = mold.get(md);
-                    String n = mnew.get(md);
-                    if (o == null) o = md;
-                    if (n == null) n = md;
-                    ret.methodMap.put(new MethodData(cls + o, pts[4]), new MethodData(cls + n, pts[4]));
 
+                IMappingFile oldToSrg = null;
+                if (!"SRG".equals(oldMapping)) {
+                    File oldToSrgF = new File(MappingDownloader.getMappingRoot(oldMapping, cache), oldMapping + "_to_srg.tsrg");
+                    if (!oldToSrgF.exists()) {
+                        listener.writeLine("Loading Old Mapping");
+                        Map<String, String> names = new HashMap<>();
+                        loadCSV(MappingDownloader.getCsvs(oldMapping, cache), names);
 
-                    if (md.startsWith("func_") && !pts[4].startsWith("()")) {
-                        int idx = 0;
-                        if (statics.contains(md)) {
-                            idx++;
-                        }
-                        List<String> params = Lists.newArrayList();
-                        String id = md.split("_")[1];
-                        int pos = 1;
-                        int end = pts[3].lastIndexOf(')');
-                        while (pos < end) {
-                            params.add("p_" + id + "_" + idx++ + "_");
-                            char i = pts[3].charAt(pos);
-                            switch (i) {
-                                case 'L':
-                                    pos = pts[3].indexOf(';', pos) + 1;
-                                    break;
-                                case 'J':
-                                case 'D':
-                                    idx++;
-                                    pos++;
-                                    break;
-                                default:
-                                    pos++;
-                                    break;
+                        listener.writeLine("Creating Old to SRG");
+                        oldToSrg = srgToSrg.rename(new IRenamer() {
+                            @Override
+                            public String rename(IField value) {
+                                return names.getOrDefault(value.getMapped(), value.getMapped());
                             }
+                            @Override
+                            public String rename(IMethod value) {
+                                return names.getOrDefault(value.getMapped(), value.getMapped());
+                            }
+                        }).reverse();
+                        oldToSrg.write(oldToSrgF.toPath(), IMappingFile.Format.TSRG, false);
+                    } else {
+                        oldToSrg = IMappingFile.load(oldToSrgF);
+                    }
+                } else {
+                    oldToSrg = srgToSrg;
+                }
+
+                IMappingFile srgToNew = null;
+                if (!"SRG".equals(newMapping)) {
+
+                    File srgToNewF = new File(MappingDownloader.getMappingRoot(newMapping, cache), "srg_to_" + oldMapping + ".tsrg");
+                    if (!srgToNewF.exists()) {
+                        listener.writeLine("Loading New Mapping");
+                        Map<String, String> names = new HashMap<>();
+                        loadCSV(MappingDownloader.getCsvs(newMapping, cache), names);
+
+                        listener.writeLine("Creating New to SRG");
+                        IMappingFile newToSrg = srgToSrg.rename(new IRenamer() {
+                            @Override
+                            public String rename(IField value) {
+                                return names.getOrDefault(value.getMapped(), value.getMapped());
+                            }
+                            @Override
+                            public String rename(IMethod value) {
+                                return names.getOrDefault(value.getMapped(), value.getMapped());
+                            }
+                        }).reverse();
+                        newToSrg.write(srgToNewF.toPath(), IMappingFile.Format.TSRG, false);
+                    } else {
+                        srgToNew = IMappingFile.load(srgToNewF);
+                    }
+                } else {
+                    srgToNew = srgToSrg;
+                }
+
+                listener.writeLine("Creating Old to New");
+                IMappingFile oldToNew = oldToSrg.chain(srgToNew);
+                oldToNew.write(oldToNewF.toPath(), IMappingFile.Format.TSRG, false);
+            }
+            return oldToNewF;
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private static File createExc(String mcVersion, String oldMapping, String newMapping, File cache, IProgressListener listener) {
+        if (listener == null)
+            listener = NULL;
+
+        try {
+            File oldToNewF = "SRG".equals(oldMapping) ? new File(MappingDownloader.getMcpRoot(mcVersion, cache), "srg_to_" + newMapping + ".exc") :
+                             "SRG".equals(newMapping) ? new File(MappingDownloader.getMappingRoot(oldMapping, cache), oldMapping + "_to_srg.exc") :
+                                                        new File(MappingDownloader.getMappingRoot(oldMapping, cache), oldMapping + "_to_" + newMapping + ".exc");
+            if (!oldToNewF.exists()) {
+
+                listener.writeLine("Loading Statics File");
+                File staticsF = new File(MappingDownloader.getMcpRoot(mcVersion, cache), "statics.txt");
+                Set<String> statics;
+                if (!staticsF.exists()) {
+                    byte[] data = MappingDownloader.getMcpData(mcVersion, cache, "statics", false);
+                    Files.write(staticsF.toPath(), data);
+                    statics = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(data), StandardCharsets.UTF_8)).lines().collect(Collectors.toSet());
+                } else {
+                    statics = Files.lines(staticsF.toPath(), StandardCharsets.UTF_8).collect(Collectors.toSet());
+                }
+
+                listener.writeLine("Loading Constructors File");
+                File ctrsF = new File(MappingDownloader.getMcpRoot(mcVersion, cache), "constructors.txt");
+                Map<String, String> ctrs;
+                if (!staticsF.exists()) {
+                    byte[] data = MappingDownloader.getMcpData(mcVersion, cache, "constructors", false);
+                    Files.write(ctrsF.toPath(), data);
+                    ctrs = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(data), StandardCharsets.UTF_8)).lines()
+                        .map(l -> l.split(" "))
+                        .collect(Collectors.toMap(e -> e[1] + ' ' + e[2], e -> 'i' + e[0]));
+                } else {
+                    ctrs = Files.lines(ctrsF.toPath(), StandardCharsets.UTF_8)
+                        .map(l -> l.split(" "))
+                        .collect(Collectors.toMap(e -> e[1] + ' ' + e[2], e -> 'i' + e[0]));
+                }
+
+                listener.writeLine("Loading MCP Mappings");
+                File mcpMapping = new File(MappingDownloader.getMcpRoot(mcVersion, cache), "obf_to_srg.tsrg");
+                IMappingFile obfToSrg = null;
+                if (!mcpMapping.exists()) {
+                    byte[] data = MappingDownloader.getMcpData(mcVersion, cache, "mappings", false);
+                    Files.write(mcpMapping.toPath(), data);
+                    obfToSrg = IMappingFile.load(new ByteArrayInputStream(data));
+                } else {
+                    obfToSrg = IMappingFile.load(mcpMapping);
+                }
+
+                Map<String, String> oNames = new HashMap<>();
+                if (!"SRG".equals(oldMapping)) {
+                    listener.writeLine("Loading Old Mapping");
+                    loadCSV(MappingDownloader.getCsvs(oldMapping, cache), oNames);
+                }
+
+                Map<String, String> nNames = new HashMap<>();
+                if (!"SRG".equals(newMapping)) {
+                    listener.writeLine("Loading New Mapping");
+                    loadCSV(MappingDownloader.getCsvs(newMapping, cache), nNames);
+                }
+
+                final List<String> lines = new ArrayList<>();
+                obfToSrg.getClasses().forEach(cls -> {
+                    cls.getMethods().forEach(mtd -> {
+                        String name = mtd.getMapped();
+                        String desc = mtd.getDescriptor();
+                        String id = null;
+
+                        if (name.startsWith("func_") && !desc.startsWith("()"))
+                            id = name.split("_")[1];
+                        else if (name.equals("<init>"))
+                            id = ctrs.getOrDefault(cls.getMapped() + ' ' + desc, null);
+
+
+                        if (id != null) {
+                            int pos = 1;
+                            int end = desc.lastIndexOf(')');
+
+                            int idx = statics.contains(name) ? 1 : 0;
+                            List<String> params = new ArrayList<>();
+                            while (pos < end) {
+                                String srg = "p_" + id + '_' + idx++ + '_';
+                                params.add(nNames.getOrDefault(srg, srg));
+                                switch (desc.charAt(pos)) {
+                                    case 'L':
+                                        pos = desc.indexOf(';', pos) + 1;
+                                        break;
+                                    case 'J':
+                                    case 'D':
+                                        idx++;
+                                    default:
+                                        pos++;
+                                }
+                            }
+                            lines.add(cls.getMapped() + '.' + mtd.getMapped() + mtd.getMappedDescriptor() + "=|" + params.stream().collect(Collectors.joining(",")));
                         }
-                        excs.put(cls + o, "|" + COMMA.join(params));
+                    });
+                });
+                Collections.sort(lines);
+
+                try (BufferedWriter writer = Files.newBufferedWriter(oldToNewF.toPath())) {
+                    for (String line : lines) {
+                        writer.write(line);
+                        writer.write('\n');
                     }
                 }
             }
+            return oldToNewF;
         } catch (IOException e) {
-            // TODO Auto-generated catch block
             e.printStackTrace();
+            return null;
         }
-        return ret;
     }
-
-    static Splitter COMMA = Splitter.on(",");
-    private static void loadCSV(File file, final Map<String, String> map){
-        try {
-            boolean header = true;
-            for (String line : Files.readLines(file, Charsets.UTF_8)) {
-                if (header) {
-                    header = false;
+    private static boolean loadCSV(File file, final Map<String, String> map){
+        try (ZipFile zip = new ZipFile(file)) {
+            Enumeration<? extends ZipEntry> enu = zip.entries();
+            while (enu.hasMoreElements()) {
+                ZipEntry entry = enu.nextElement();
+                if (entry.isDirectory() || !entry.getName().endsWith(".csv"))
                     continue;
-                }
-                List<String> pts = COMMA.splitToList(line);
-                map.put(pts.get(0), pts.get(1));
+                CsvReader reader = new CsvReader();
+                reader.setContainsHeader(true);
+                CsvContainer csv = reader.read(new InputStreamReader(zip.getInputStream(entry), StandardCharsets.UTF_8));
+                csv.getRows().forEach(row -> map.put(row.getField(0), row.getField(1)));
             }
+            return true;
         } catch (IOException e) {
-            // TODO Auto-generated catch block
             e.printStackTrace();
+            return false;
         }
     }
 
-    private static boolean applyRemap(SrgContainer srg, ExceptorFile exc, final List<File> deps, final List<File> srcs, final IProgressListener listener) {
-        RangeApplier applier = new RangeApplier();
-        applier.setKeepImports(true);
-        applier.readSrg(srg);
-        if (exc != null && exc.size() > 0)
-            applier.readParamMap(exc);
+    private static boolean applyRemap(File srg, File exc, final List<File> deps, final List<File> srcs, final IProgressListener listener) {
+        RangeApplierBuilder builder = new RangeApplierBuilder().keepImports();
+        builder.srg(srg);
+        if (exc != null && exc.exists())
+            builder.exc(exc);
 
-        PrintStream log = null;
-        try {
-            log = new PrintStream("./ApplyRange.log"){
-                private int total = 1;
-                private int current = 0;
+        try(PrintStream log  = new PrintStream("./ApplyRange.log"){
+            private int total = 1;
+            private int current = 0;
 
-                @Override
-                public void println(String x) {
-                    if (listener != null) {
-                        if (x.startsWith("Processing ") && x.endsWith(" files")) {
-                            listener.writeLine(x);
-                            total = Integer.parseInt(x.split(" ")[1]);
-                        }
-                        else if (x.startsWith("Start Processing: ")) {
-                            String file = x.substring(17);
-                            listener.writeLine("Remapping " + ++current + "/" + total + ": " + file);
-                        }
+            @Override
+            public void println(String x) {
+                if (listener != null) {
+                    if (x.startsWith("Processing ") && x.endsWith(" files")) {
+                        listener.writeLine(x);
+                        total = Integer.parseInt(x.split(" ")[1]);
                     }
-                    super.println(x);
+                    else if (x.startsWith("Start Processing: ")) {
+                        String file = x.substring(17);
+                        listener.writeLine("Remapping " + ++current + "/" + total + ": " + file);
+                    }
                 }
-            };
-            applier.setOutLogger(log);
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-        }
-
-
-        SourcesSupplier sup = new SourcesSupplier(srcs);
-        try {
-            applier.remapSources(sup, sup, new File("./ExtractRange.txt"), false);
+                super.println(x);
+            }
+        }) {
+            builder.logger(log);
+            srcs.forEach(builder::input);
+            builder.range(new File("./ExtractRange.txt"));
+            builder.output(new File("./output/")); //TODO: Change API to expose Suppliers
+            RangeApplier applier = builder.build();
+            SourcesSupplier sup = new SourcesSupplier(srcs);
+            applier.setOutput(sup);
+            applier.run();
         } catch (IOException e) {
-            // TODO Auto-generated catch block
             e.printStackTrace();
+            return false;
         }
-        if (log != null)
-            log.close();
+
+
         if (listener != null)
             listener.writeLine("Remapping finished!");
 

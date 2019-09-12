@@ -1,6 +1,23 @@
-package net.minecraftforge.remapper;
+/*
+ * Remapper
+ * Copyright (c) 2016-2019.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation version 2.1
+ * of the License.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
 
-import com.google.common.collect.Lists;
+package net.minecraftforge.remapper;
 
 import net.minecraftforge.remapper.RemapperTask.IProgressListener;
 
@@ -10,6 +27,7 @@ import java.awt.event.ActionListener;
 import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -41,8 +59,7 @@ public class RemapperGUI {
 
     private JButton btnRemapMod;
 
-    private List<Runnable> changeListeners = Lists.newArrayList();
-
+    private List<Runnable> changeListeners = new ArrayList<>();
 
     public RemapperGUI() {
         mainFrame = new JFrame("Java Source Remapper");
@@ -318,12 +335,12 @@ public class RemapperGUI {
             public void actionPerformed(ActionEvent e) {
                 if (MappingDownloader.needsDownload(mcVersion, oldMapping, cacheDir)) {
                     setStatus("Downloading " + oldMapping + " for " + mcVersion, Color.BLACK).run();
-                    MappingDownloader.download(mcVersion, oldMapping, cacheDir,
-                    new Runnable(){
-                        public void run(){
+                    MappingDownloader.download(mcVersion, oldMapping, cacheDir, (success) -> {
+                        if (success)
                             setStatus("Download Complete!", Color.BLACK).run();
-                            updateGuiState();
-                        }
+                        else
+                            setStatus("Download Failed!", Color.RED).run();
+                        updateGuiState();
                     });
                 }
                 jDownloadOld.setEnabled(false);
@@ -445,12 +462,12 @@ public class RemapperGUI {
             public void actionPerformed(ActionEvent e) {
                 if (MappingDownloader.needsDownload(mcVersion, newMapping, cacheDir)) {
                     setStatus("Downloading " + newMapping + " for " + mcVersion, Color.BLACK).run();
-                    MappingDownloader.download(mcVersion, newMapping, cacheDir,
-                    new Runnable(){
-                        public void run(){
+                    MappingDownloader.download(mcVersion, newMapping, cacheDir, (success) -> {
+                        if (success)
                             setStatus("Download Complete!", Color.BLACK).run();
-                            updateGuiState();
-                        }
+                        else
+                            setStatus("Download Failed!", Color.RED).run();
+                        updateGuiState();
                     });
                 }
                 jDownloadNew.setEnabled(false);
@@ -590,7 +607,7 @@ public class RemapperGUI {
 
     static class ListModel<T> extends AbstractListModel<T> implements List<T> {
         private static final long serialVersionUID = -8633567737555564475L;
-        private List<T> list = Lists.newArrayList();
+        private List<T> list = new ArrayList<>();
 
         @Override
         public int getSize() {

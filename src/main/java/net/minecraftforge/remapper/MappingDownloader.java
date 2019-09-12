@@ -1,36 +1,63 @@
+/*
+ * Remapper
+ * Copyright (c) 2016-2019.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation version 2.1
+ * of the License.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
 package net.minecraftforge.remapper;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.Reader;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 
-import com.google.common.base.Charsets;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.io.ByteStreams;
-import com.google.common.io.CharStreams;
-import com.google.common.io.Files;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
-import com.google.gson.internal.Streams;
 import com.google.gson.reflect.TypeToken;
 
+import net.minecraftforge.remapper.json.Config;
+import net.minecraftforge.remapper.json.MCPConfigV1;
+
 public class MappingDownloader implements Runnable {
-    private static Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    public static Map<String, List<String>> mappings = Maps.newLinkedHashMap();
+    public static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    public static Map<String, List<String>> mappings = new LinkedHashMap<>();
+    private static Map<String, byte[]> mcpdata_cache = new HashMap<>();
 
     public static void downloadMappingList(Runnable callback) {
         new Thread(new MappingDownloader(callback)).run();
@@ -41,33 +68,48 @@ public class MappingDownloader implements Runnable {
         this.callback = callback;
     }
 
-    private void loadCache() {
+    private String toString(File file) throws IOException {
+        return toString(file.toPath());
+    }
+    private String toString(Path path) throws IOException {
+        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+    }
+    private String toString(InputStream in) throws IOException {
+        StringBuilder buf = new StringBuilder();
+        try (Reader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            int c = 0;
+            while ((c = reader.read()) != -1)
+                buf.append((char) c);
+        }
+        return buf.toString();
+    }
+
+    private boolean loadCache() {
         File cache = new File("./mappings.json");
         if (!cache.exists())
-            return;
+            return false;
 
         try {
-            loadJson(Files.toString(cache, Charsets.UTF_8));
+            loadJson(toString(cache));
+            return true;
         } catch (IOException e) {
-            // TODO Auto-generated catch block
             e.printStackTrace();
+            return false;
         }
     }
 
-    private void download() {
-        File cache = new File("./mappings.json");
+    private boolean download() {
+        Path cache = Paths.get("./mappings.json");
         try {
             URLConnection con = (new URL("http://export.mcpbot.bspk.rs/versions.json")).openConnection();
-            String data = CharStreams.toString(new InputStreamReader(con.getInputStream()));
+            String data = toString(con.getInputStream());
             JsonObject obj = new JsonParser().parse(data).getAsJsonObject();
-            Files.write(GSON.toJson(obj), cache, Charsets.UTF_8);
+            Files.write(cache, GSON.toJson(obj).getBytes(StandardCharsets.UTF_8));
             loadJson(data);
-        } catch (MalformedURLException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+            return true;
         } catch (IOException e) {
-            // TODO Auto-generated catch block
             e.printStackTrace();
+            return false;
         }
     }
 
@@ -77,7 +119,7 @@ public class MappingDownloader implements Runnable {
             mappings.clear();
             for (String mcver : json.keySet()) {
                 Map<String, int[]> values = json.get(mcver);
-                List<String> tmp = Lists.newArrayList();
+                List<String> tmp = new ArrayList<>();
                 mappings.put(mcver, tmp);
                 for (String channel : values.keySet()) {
                     for (int id : values.get(channel)) {
@@ -101,15 +143,10 @@ public class MappingDownloader implements Runnable {
     public static boolean needsDownload(String mcVersion, String mapping, File cacheDir) {
         if ("UNLOADED".equals(mapping))
             return false;
-        if (!getMcp(mcVersion, cacheDir, "joined.srg").exists() ||
-            !getMcp(mcVersion, cacheDir, "joined.exc").exists() ||
-            !getMcp(mcVersion, cacheDir, "static_methods.txt").exists())
+        if (!getMcp(mcVersion, cacheDir).exists())
             return true;
 
-        for (File f : getCsvs(mapping, cacheDir))
-            if (!f.exists())
-                return true;
-        return false;
+        return getCsvs(mapping, cacheDir) != null && !getCsvs(mapping, cacheDir).exists();
     }
 
 
@@ -128,12 +165,77 @@ public class MappingDownloader implements Runnable {
         return null;
     }
 
-    public static File getMcp(String mcVersion, File cacheDir, String file) {
-        return new File(cacheDir, "de/oceanlabs/mcp/mcp/" + mcVersion + "/" + file);
+    public static byte[] getMcpData(String version, File cache, String key, boolean optional) throws IOException {
+        byte[] data = mcpdata_cache.get(version + " " + key);
+        if (data != null)
+            return data;
+
+        File mcp = getMcp(version, cache);
+        if (!mcp.exists())
+            return null;
+
+        try (ZipFile zip = new ZipFile(mcp)) {
+            data = mcpdata_cache.get(version + " config.json");
+            if (data == null) {
+                ZipEntry entry = zip.getEntry("config.json");
+                if (entry == null)
+                    throw new IOException("Zip Missing Entry: config.json File: " + mcp.getAbsolutePath());
+                data = getBytes(zip.getInputStream(entry));
+                mcpdata_cache.put(version + " config.json", data);
+            }
+
+            if ("config.json".equals(key))
+                return data;
+
+            int spec = Config.getSpec(data);
+            if (spec != 1)
+                throw new IllegalArgumentException("Unknown MCPConfig Spec version: " + spec + " in " + mcp.getAbsolutePath());
+
+            MCPConfigV1 cfg = MCPConfigV1.get(data);
+            String entryName = cfg.getData(key);
+            if (entryName == null) {
+                if (optional) {
+                    data = new byte[0];
+                    mcpdata_cache.put(version + " " + key, data);
+                    return data;
+                }
+                throw new IllegalArgumentException("MCPConfig did not have data entry for \"" + key + "\" in " + mcp.getAbsolutePath());
+            }
+
+            ZipEntry entry = zip.getEntry(entryName);
+            if (entry == null)
+                throw new IOException("Zip Missing Entry: \"" + entryName + "\" For Data: \"" + key + "\" in " + mcp.getAbsolutePath());
+            data = getBytes(zip.getInputStream(entry));
+            mcpdata_cache.put(version + " " + key, data);
+            return data;
+        }
+
     }
-    public static File[] getCsvs(String mapping, File cacheDir) {
+    private static byte[] getBytes(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        copy(in, out);
+        return out.toByteArray();
+    }
+    private static int copy(InputStream in, OutputStream out) throws IOException {
+        int count = 0;
+        int c = 0;
+        byte[] buf = new byte[0x100];
+        while ((c = in.read(buf, 0, buf.length)) != -1) {
+            out.write(buf, 0, c);
+            count += c;
+        }
+        return count;
+    }
+
+    public static File getMcp(String version, File cache) {
+        return new File(cache, "de/oceanlabs/mcp/mcp_config/" + version + "/mcp_config-" + version + ".zip");
+    }
+    public static File getMcpRoot(String version, File cache) {
+        return new File(cache, "de/oceanlabs/mcp/mcp_config/" + version + "/");
+    }
+    public static File getCsvs(String mapping, File cacheDir) {
         if ("SRG".equals(mapping))
-            return new File[0];
+            return null;
         mapping = mapping.replace("_nodoc", "");
         String channel = mapping;
         String version = mapping;
@@ -141,99 +243,70 @@ public class MappingDownloader implements Runnable {
             channel = mapping.substring(0, mapping.lastIndexOf('_'));
             version = mapping.substring(mapping.lastIndexOf('_') + 1);
         }
-        File base = new File(cacheDir, "de/oceanlabs/mcp/mcp_" + channel + "_nodoc/" + version);
-        return new File[]{
-            new File(base, "fields.csv"),
-            new File(base, "methods.csv"),
-            new File(base, "params.csv")
-        };
+        return new File(cacheDir, "de/oceanlabs/mcp/mcp_" + channel + "_nodoc/" + version + "/mcp_" + channel + "_nodoc-" + version + ".zip");
     }
 
-    public static void download(final String mcVersion, final String mapping, final File cacheDir, final Runnable callback) {
-        new Thread(new Runnable(){
-            @Override
-            public void run() {
-                if (!getMcp(mcVersion, cacheDir, "joined.srg").exists() ||
-                    !getMcp(mcVersion, cacheDir, "joined.exc").exists() ||
-                    !getMcp(mcVersion, cacheDir, "static_methods.txt").exists())
-                {
+    public static File getMappingRoot(String mapping, File cache) {
+        if ("SRG".equals(mapping))
+            return null;
+        mapping = mapping.replace("_nodoc", "");
+        String channel = mapping;
+        String version = mapping;
+        if (mapping.indexOf('_') != -1) {
+            channel = mapping.substring(0, mapping.lastIndexOf('_'));
+            version = mapping.substring(mapping.lastIndexOf('_') + 1);
+        }
+        return new File(cache, "de/oceanlabs/mcp/mcp_" + channel + "_nodoc/" + version + "/");
+    }
 
-                    URL maven = getMaven("de.oceanlabs.mcp", "mcp", mcVersion, "srg", "zip");
-                    File base = getMcp(mcVersion, cacheDir, "");
-                    downloadZip(base, maven);
+    public static void download(final String mcVersion, final String mapping, final File cacheDir) {
+        download(mcVersion, mapping, cacheDir, (status) -> {});
+    }
+    public static void download(final String mcVersion, final String mapping, final File cacheDir, final Consumer<Boolean> callback) {
+        new Thread(() -> {
+            if (!getMcp(mcVersion, cacheDir).exists()) {
+                if (!download(getMaven("de.oceanlabs.mcp", "mcp_config", mcVersion, null, "zip"), getMcp(mcVersion, cacheDir))) {
+                    callback.accept(false);
+                    return;
                 }
+            }
 
-                String tmp = mapping.replace("_nodoc", "");
-                String channel = tmp.substring(0, tmp.lastIndexOf('_'));
-                String version = tmp.substring(tmp.lastIndexOf('_') + 1);
+            String tmp = mapping.replace("_nodoc", "");
+            String channel = tmp.substring(0, tmp.lastIndexOf('_'));
+            String version = tmp.substring(tmp.lastIndexOf('_') + 1);
+            File csvs = getCsvs(mapping, cacheDir);
 
-                for (File f : getCsvs(mapping, cacheDir)) {
-                    if (!f.exists()) {
 
-                        String mavenVer = mcVersion;
-                        for (String key : mappings.keySet()) {
-                            if (mappings.get(key).contains(channel + "_" + version)) {
-                                mavenVer = key;
-                                break;
-                            }
-                        }
-
-                        URL maven = getMaven("de.oceanlabs.mcp", "mcp_" + channel +"_nodoc", version + "-" + mavenVer, null, "zip");
-                        downloadZip(f.getParentFile(), maven);
+            if (csvs != null && !csvs.exists()) {
+                String mavenVer = mcVersion;
+                for (String key : mappings.keySet()) {
+                    if (mappings.get(key).contains(channel + "_" + version)) {
+                        mavenVer = key;
                         break;
                     }
                 }
 
-                if (callback != null)
-                    callback.run();
+                URL maven = getMaven("de.oceanlabs.mcp", "mcp_" + channel +"_nodoc", version + "-" + mavenVer, null, "zip");
+                if (!download(maven, csvs.getParentFile())) {
+                    callback.accept(false);
+                    return;
+                }
             }
+
+            callback.accept(true);
         }).start();
     }
 
-    private static void downloadZip(File cacheDir, URL url) {
-        InputStream is = null;
-        FileOutputStream fos = null;
+    private static boolean download(URL url, File target) {
         System.out.println("Downloading: " + url);
-        System.out.println("To:          " + cacheDir.getAbsolutePath());
+        System.out.println("To:          " + target.getAbsolutePath());
 
-        try {
-            is = url.openStream();
-            ZipInputStream zis = new ZipInputStream(is);
-            ZipEntry entry = null;
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.isDirectory())
-                    continue;
-
-                File cache = new File(cacheDir, entry.getName());
-                if (!cache.getParentFile().exists())
-                    cache.getParentFile().mkdirs();
-                ByteStreams.copy(zis, fos = new FileOutputStream(cache));
-                fos.close();
-            }
-
-        } catch (FileNotFoundException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+        try (InputStream is = url.openStream()) {
+            Files.copy(is, target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            return true;
         } catch (IOException e) {
-            // TODO Auto-generated catch block
             e.printStackTrace();
-        } finally {
-            if (fos != null) {
-                try {
-                    fos.close();
-                } catch (IOException e) {
-                    // TODO Auto-generated catch block
-                    e.printStackTrace();
-                }
-            }
-            if (is != null) {
-                try {
-                    is.close();
-                } catch (IOException e) {
-                    // TODO Auto-generated catch block
-                    e.printStackTrace();
-                }
-            }
+            return false;
         }
     }
 }

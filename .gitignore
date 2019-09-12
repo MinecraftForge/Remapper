@@ -34,3 +34,4 @@ changelog.txt
 /ExtractRange.log
 /ExtractRange.txt
 /mappings.json
+*.log

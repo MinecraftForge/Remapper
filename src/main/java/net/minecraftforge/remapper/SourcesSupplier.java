@@ -1,35 +1,58 @@
+/*
+ * Remapper
+ * Copyright (c) 2016-2019.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation version 2.1
+ * of the License.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
 package net.minecraftforge.remapper;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.io.Files;
 
 import net.minecraftforge.srg2source.util.io.InputSupplier;
 import net.minecraftforge.srg2source.util.io.OutputSupplier;
 
 public class SourcesSupplier implements InputSupplier, OutputSupplier {
     List<File> roots;
-    final Map<String, String> files = Maps.newHashMap();
+    final Map<String, String> files = new HashMap<>();
 
     public SourcesSupplier(List<File> roots) {
         this.roots = roots;
 
         for (File src : roots) {
             String root = src.getAbsolutePath();
-            for (File f : Files.fileTreeTraverser().preOrderTraversal(src)) {
-                if (f.isDirectory())
-                    continue;
-                String relative = f.getAbsolutePath().substring(root.length() + 1);
-                files.put(relative, root);
+            Path path = src.toPath();
+            try {
+                Files.walk(path)
+                    .filter(Files::isRegularFile)
+                    .map(path::relativize)
+                    .forEach(rel -> files.put(rel.toString(), root));
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         }
     }
@@ -54,11 +77,9 @@ public class SourcesSupplier implements InputSupplier, OutputSupplier {
 
         try
         {
-            if (!out.exists()) {
+            if (!out.getParentFile().exists())
                 out.getParentFile().mkdirs();
-                out.createNewFile();
-            }
-            return Files.asByteSink(out).openStream();
+            return new FileOutputStream(out);
         } catch (IOException e) {
             return null;
         }
@@ -91,7 +112,7 @@ public class SourcesSupplier implements InputSupplier, OutputSupplier {
 
     @Override
     public List<String> gatherAll(String endFilter) {
-        List<String> ret = Lists.newArrayList();
+        List<String> ret = new ArrayList<>();
         for (String path : files.keySet())
             if (path.endsWith(endFilter))
                 ret.add(path);

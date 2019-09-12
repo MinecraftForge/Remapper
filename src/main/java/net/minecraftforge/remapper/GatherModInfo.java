@@ -1,8 +1,23 @@
-package net.minecraftforge.remapper;
+/*
+ * Remapper
+ * Copyright (c) 2016-2019.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation version 2.1
+ * of the License.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
 
-import com.google.common.base.Splitter;
-import com.google.common.collect.Lists;
-import com.google.common.io.Files;
+package net.minecraftforge.remapper;
 
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -12,7 +27,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import javax.swing.*;
 
@@ -39,23 +57,28 @@ class GatherModInfo implements ActionListener, Runnable {
                 return;
             }
 
+            System.out.println("Executing gradle build this may take some time!");
             println("Executing gradle build this may take some time!");
 
             File temp_build = new File(dir, "REMAP_MOD_TEMP.gradle");
             FileOutputStream fos = new FileOutputStream(temp_build);
-            Files.copy(new File(dir, "build.gradle"), fos);
+            Files.copy(new File(dir, "build.gradle").toPath(), fos);
             String[] lines = new String[] {
-                "task remapGetInfo << {",
-                "   for (File f : sourceSets.main.compileClasspath)",
-                "       println 'DEP: ' + f.getPath()",
-                "   println 'DEP: ' + jar.archivePath",
-                "   println 'MAPPING: ' + minecraft.mappings",
-                "   println 'MINECRAFT: ' + minecraft.version",
-                "   for (File f : sourceSets.main.java.srcDirs)",
-                "       println 'SOURCE: ' + f.getPath()",
-                "   println 'CACHE: ' + new File(project.getGradle().getGradleUserHomeDir(), '/caches/minecraft/').getAbsolutePath()",
+                "task remapGetInfo {",
+                "  doLast {",
+                "    for (File f : sourceSets.main.compileClasspath)",
+                "      println 'DEP: ' + f.getPath()",
+                "    println 'DEP: ' + jar.archivePath",
+                "    println 'MAPPING: ' + minecraft.mappings",
+                "    println 'MINECRAFT: ' + minecraft.version",
+                "    for (File f : sourceSets.main.java.srcDirs)",
+                "      println 'SOURCE: ' + f.getPath()",
+                "    println 'CACHE: ' + new File(project.getGradle().getGradleUserHomeDir(), '/caches/minecraft/').getAbsolutePath()",
+                "  }",
                 "}",
-                "remapGetInfo.dependsOn('setupDevWorkspace', 'build')"
+                "if (project.tasks.findByName('setupDevWorkspace'))",
+                "  remapGetInfo.dependsOn('setupDevWorkspace')",
+                "remapGetInfo.dependsOn('build')"
             };
             for (String line : lines) {
                 fos.write(line.getBytes());
@@ -67,48 +90,50 @@ class GatherModInfo implements ActionListener, Runnable {
             this.remapperGUI.deps.clear();
             this.remapperGUI.srcs.clear();
 
-            Splitter SPLITTER = Splitter.on(": ").limit(2);
-            ProcessBuilder pb = new ProcessBuilder(gradlew.getPath(),
-                    "--build-file", "REMAP_MOD_TEMP.gradle", "remapGetInfo");
+            ProcessBuilder pb = new ProcessBuilder(gradlew.getPath(), "--build-file", "REMAP_MOD_TEMP.gradle", "--console=plain", "--stacktrace", "remapGetInfo");
+            pb.redirectErrorStream(true);
             pb.directory(dir);
+            System.out.println("Starting process: " + pb.command().stream().collect(Collectors.joining(" ")));
+            System.out.println("Directory: " + pb.directory());
             Process p = pb.start();
-            BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            BufferedReader err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
-            String line = null;
-            while ((line = br.readLine()) != null) {
-                //println(line);
-                List<String> pts = SPLITTER.splitToList(line);
-                if (pts.size() < 2)
-                    continue;
-                if (pts.get(0).equals("DEP")) {
-                    println("DEPENDANCY: " + pts.get(1));
-                    this.remapperGUI.deps.add(new File(pts.get(1)));
-                }
-                else if (pts.get(0).equals("SOURCE")) {
-                    println(line);
-                    this.remapperGUI.srcs.add(new File(pts.get(1)));
-                }
-                else if (pts.get(0).equals("MINECRAFT")) {
-                    println(line);
-                    this.remapperGUI.mcVersion = pts.get(1);
-                    this.remapperGUI.updateGuiState();
-                }
-                else if (pts.get(0).equals("MAPPING")) {
-                    println(line);
-                    this.remapperGUI.oldMapping = pts.get(1);
-                    this.remapperGUI.updateGuiState();
-                }
-                else if (pts.get(0).equals("CACHE")) {
-                    println(line);
-                    this.remapperGUI.cacheDir = new File(pts.get(1));
-                    this.remapperGUI.updateGuiState();
-                }
-            }
-            while((line = err.readLine()) != null) {
-                if(line.startsWith("BUILD FAILED") || line.startsWith("FAILURE")) {
-                    this.remapperGUI.buildFailed = true;
-                    this.remapperGUI.updateGuiState();
-                    break;
+            while (p.isAlive()) {
+                BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line = null;
+                while ((line = br.readLine()) != null) {
+                    System.out.println(line);
+                    int index = line.indexOf(':');
+                    if (index == -1)
+                        continue;
+                    String prefix = line.substring(0, index);
+                    String suffix = line.substring(index + 1);
+                    if (prefix.equals("DEP")) {
+                        println("DEPENDANCY: " + suffix);
+                        this.remapperGUI.deps.add(new File(suffix));
+                    }
+                    else if (prefix.equals("SOURCE")) {
+                        println(line);
+                        this.remapperGUI.srcs.add(new File(suffix));
+                    }
+                    else if (prefix.equals("MINECRAFT")) {
+                        println(line);
+                        this.remapperGUI.mcVersion = suffix;
+                        this.remapperGUI.updateGuiState();
+                    }
+                    else if (prefix.equals("MAPPING")) {
+                        println(line);
+                        this.remapperGUI.oldMapping = suffix;
+                        this.remapperGUI.updateGuiState();
+                    }
+                    else if (prefix.equals("CACHE")) {
+                        println(line);
+                        this.remapperGUI.cacheDir = new File(suffix);
+                        this.remapperGUI.updateGuiState();
+                    }
+                    else if(line.startsWith("BUILD FAILED") || line.startsWith("FAILURE")) {
+                        this.remapperGUI.buildFailed = true;
+                        this.remapperGUI.updateGuiState();
+                        break;
+                    }
                 }
             }
             if (temp_build.exists())
@@ -133,14 +158,13 @@ class GatherModInfo implements ActionListener, Runnable {
 
     private List<String> getPossibleGradleWrapperFiles() {
         if(RemapperGUI.IS_WINDOWS) {
-            return Lists.newArrayList("gradlew.bat");
+            return Arrays.asList("gradlew.bat");
         } else {
-            return Lists.newArrayList("gradlew", "gradlew.sh");
+            return Arrays.asList("gradlew", "gradlew.sh");
         }
     }
 
     private void println(final String line) {
-        System.out.println(line);
         this.remapperGUI.setStatus(line, Color.BLACK).run();
     }
 }
