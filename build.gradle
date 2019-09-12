@@ -62,7 +62,6 @@ ext {
 }
 
 dependencies {
-    compile 'net.sf.jopt-simple:jopt-simple:4.5'
     compile 'com.google.code.gson:gson:2.7'
     compile 'de.siegmar:fastcsv:1.0.3'
     compile('net.minecraftforge:Srg2Source:5.0.+:fatjar'){

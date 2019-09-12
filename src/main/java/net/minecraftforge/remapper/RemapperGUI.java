@@ -45,15 +45,16 @@ public class RemapperGUI {
     private JLabel status;
     private JButton btnGetModInfo;
     File targetDir = new File(".");
+    File jdkDir = new File(System.getProperties().getProperty("java.home"));
     ListModel<File> deps = new ListModel<File>();
     ListModel<File> srcs = new ListModel<File>();
     public boolean buildFailed;
 
     File cacheDir = new File(".");
-    private JComboBox<String> jmcVersion;
+    private JComboBox<MinecraftVersion> jmcVersion;
     private JComboBox<String> joldMapping, jnewMapping;
     private JButton           jDownloadOld, jDownloadNew;
-    String mcVersion = "UNLOADED";
+    MinecraftVersion mcVersion = null;
     String oldMapping = "UNLOADED";
     private String newMapping = "UNLOADED";
 
@@ -146,12 +147,7 @@ public class RemapperGUI {
         mainFrame.setMinimumSize(new Dimension(440, 320));
         mainFrame.setVisible(true);
 
-        MappingDownloader.downloadMappingList(new Runnable(){
-            @Override
-            public void run() {
-                updateGuiState();
-            }
-        });
+        MappingDownloader.downloadMappingList(this::updateGuiState);
     }
 
     private JComponent createFolderAndLoadInfoComponent() {
@@ -159,6 +155,7 @@ public class RemapperGUI {
         //==================================================
         // Folder select
         JPanel folderSelect = createFolderSelectionComponent();
+        JPanel jdkSelect = createJdkSelectionComponent();
         //=====================================================
         status = new JLabelMax("Select Folder!", SwingConstants.CENTER);
         status.setOpaque(true);
@@ -171,6 +168,7 @@ public class RemapperGUI {
         buttonList.add(btnGetModInfo);
         //=====================================================
         box.add(folderSelect);
+        box.add(jdkSelect);
         box.add(status);
         box.add(buttonList);
 
@@ -184,7 +182,7 @@ public class RemapperGUI {
         GridBagConstraints constraints = new GridBagConstraints();
 
         constraints.gridx = 0;
-        folderSelect.add(new JLabel("Project Folder:"), constraints);
+        folderSelect.add(new JLabel("Project Folder: "), constraints);
 
         constraints.gridx = 1;
         constraints.fill = GridBagConstraints.HORIZONTAL;
@@ -192,6 +190,25 @@ public class RemapperGUI {
         folderSelect.add(createBrowseBox(25, new IBrowseListener() {
             @Override public File getValue() { return targetDir; }
             @Override public void setValue(File value) { targetDir = value; }
+        }), constraints);
+        return folderSelect;
+    }
+
+    private JPanel createJdkSelectionComponent() {
+        JPanel folderSelect = new JPanel();
+        folderSelect.setLayout(new GridBagLayout());
+
+        GridBagConstraints constraints = new GridBagConstraints();
+
+        constraints.gridx = 0;
+        folderSelect.add(new JLabel("JDK Folder:        "), constraints);
+
+        constraints.gridx = 1;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.weightx = 1.0;
+        folderSelect.add(createBrowseBox(25, new IBrowseListener() {
+            @Override public File getValue() { return jdkDir; }
+            @Override public void setValue(File value) { jdkDir = value; }
         }), constraints);
         return folderSelect;
     }
@@ -295,30 +312,24 @@ public class RemapperGUI {
     }
 
     private JComponent createSelectMcVersionComponent() {
-        this.jmcVersion = new JComboBox<String>();
+        this.jmcVersion = new JComboBox<>();
         this.jmcVersion.setEnabled(false);
-        this.jmcVersion.addItemListener(new ItemListener(){
-            @Override
-            public void itemStateChanged(ItemEvent e) {
-                if (e.getStateChange() != ItemEvent.SELECTED || !jmcVersion.isEnabled())
-                    return;
-                RemapperGUI.this.mcVersion = (String)jmcVersion.getSelectedItem();
-                updateGuiState();
-            }
+        this.jmcVersion.addItemListener(e -> {
+            if (e.getStateChange() != ItemEvent.SELECTED || !jmcVersion.isEnabled())
+                return;
+            RemapperGUI.this.mcVersion = (MinecraftVersion)jmcVersion.getSelectedItem();
+            updateGuiState();
         });
         return this.jmcVersion;
     }
 
     private JComponent createOldMappingsSelection() {
         this.joldMapping = new JComboBox<String>();
-        this.joldMapping.addItemListener(new ItemListener(){
-            @Override
-            public void itemStateChanged(ItemEvent e) {
-                if (e.getStateChange() != ItemEvent.SELECTED || !joldMapping.isEnabled())
-                    return;
-                RemapperGUI.this.oldMapping = (String)joldMapping.getSelectedItem();
-                updateGuiState();
-            }
+        this.joldMapping.addItemListener(e -> {
+            if (e.getStateChange() != ItemEvent.SELECTED || !joldMapping.isEnabled())
+                return;
+            RemapperGUI.this.oldMapping = (String)joldMapping.getSelectedItem();
+            updateGuiState();
         });
         this.joldMapping.setEnabled(false);
         return this.joldMapping;
@@ -330,21 +341,18 @@ public class RemapperGUI {
 
         this.jDownloadOld = new JButton("Download");
         this.jDownloadOld.setEnabled(false);
-        this.jDownloadOld.addActionListener(new ActionListener(){
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (MappingDownloader.needsDownload(mcVersion, oldMapping, cacheDir)) {
-                    setStatus("Downloading " + oldMapping + " for " + mcVersion, Color.BLACK).run();
-                    MappingDownloader.download(mcVersion, oldMapping, cacheDir, (success) -> {
-                        if (success)
-                            setStatus("Download Complete!", Color.BLACK).run();
-                        else
-                            setStatus("Download Failed!", Color.RED).run();
-                        updateGuiState();
-                    });
-                }
-                jDownloadOld.setEnabled(false);
+        this.jDownloadOld.addActionListener(e -> {
+            if (mcVersion != null && MappingDownloader.needsDownload(mcVersion, oldMapping, cacheDir)) {
+                setStatus("Downloading " + oldMapping + " for " + mcVersion, Color.BLACK).run();
+                MappingDownloader.download(mcVersion.toString(), oldMapping, cacheDir, (success) -> {
+                    if (success)
+                        setStatus("Download Complete!", Color.BLACK).run();
+                    else
+                        setStatus("Download Failed!", Color.RED).run();
+                    updateGuiState();
+                });
             }
+            jDownloadOld.setEnabled(false);
         });
 
         panel.add(this.jDownloadOld, BorderLayout.EAST);
@@ -457,21 +465,18 @@ public class RemapperGUI {
 
         this.jDownloadNew = new JButton("Download");
         this.jDownloadNew.setEnabled(false);
-        this.jDownloadNew.addActionListener(new ActionListener(){
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (MappingDownloader.needsDownload(mcVersion, newMapping, cacheDir)) {
-                    setStatus("Downloading " + newMapping + " for " + mcVersion, Color.BLACK).run();
-                    MappingDownloader.download(mcVersion, newMapping, cacheDir, (success) -> {
-                        if (success)
-                            setStatus("Download Complete!", Color.BLACK).run();
-                        else
-                            setStatus("Download Failed!", Color.RED).run();
-                        updateGuiState();
-                    });
-                }
-                jDownloadNew.setEnabled(false);
+        this.jDownloadNew.addActionListener(e -> {
+            if (mcVersion != null && MappingDownloader.needsDownload(mcVersion, newMapping, cacheDir)) {
+                setStatus("Downloading " + newMapping + " for " + mcVersion, Color.BLACK).run();
+                MappingDownloader.download(mcVersion.toString(), newMapping, cacheDir, (success) -> {
+                    if (success)
+                        setStatus("Download Complete!", Color.BLACK).run();
+                    else
+                        setStatus("Download Failed!", Color.RED).run();
+                    updateGuiState();
+                });
             }
+            jDownloadNew.setEnabled(false);
         });
 
         panel.add(this.jDownloadNew, BorderLayout.EAST);
@@ -484,17 +489,7 @@ public class RemapperGUI {
 
         this.btnRemapMod = new JButton("Start Remap");
         this.btnRemapMod.setEnabled(false);
-        this.btnRemapMod.addActionListener(new ActionListener(){
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                RemapperTask.runRemapMod(deps, srcs, mcVersion, oldMapping, newMapping, cacheDir, new IProgressListener(){
-                    @Override
-                    public void writeLine(String line) {
-                        setStatus(line, Color.BLACK).run();
-                    }
-                });
-            }
-        });
+        this.btnRemapMod.addActionListener(e -> RemapperTask.runRemapMod(deps, srcs, mcVersion, oldMapping, newMapping, cacheDir, line -> setStatus(line, Color.BLACK).run()));
 
         panel.add(this.btnRemapMod, BorderLayout.EAST);
         return panel;
@@ -505,26 +500,46 @@ public class RemapperGUI {
             return;
         jmcVersion.setEnabled(false);
         jmcVersion.removeAllItems();
-        for (String version : MappingDownloader.mappings.keySet())
-            jmcVersion.addItem(version);
-        if (((DefaultComboBoxModel<String>)jmcVersion.getModel()).getIndexOf(mcVersion) == -1)
-            jmcVersion.addItem(mcVersion);
-        jmcVersion.setSelectedItem(mcVersion);
+        MappingDownloader.mappings.keySet().stream().forEach(jmcVersion::addItem);
+        addIfMissing(jmcVersion, mcVersion);
         jmcVersion.setEnabled(true);
+    }
+
+    private MinecraftVersion getNearest(MinecraftVersion ver) {
+        MinecraftVersion target = MinecraftVersion.NEGATIVE;
+        for (MinecraftVersion v : MappingDownloader.mappings.keySet()) {
+            if (v.compareTo(target) > 0 && v.compareTo(ver) <= 0)
+                target = v;
+        }
+        return target;
+    }
+
+    private <T> void addIfMissing(JComboBox<T> box, T value) {
+        if (value == null)
+            return;
+        boolean found = false;
+        for (int x = 0; x < box.getModel().getSize(); x++) {
+            if (value.equals(box.getModel().getElementAt(x))) {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            box.addItem(value);
+        box.setSelectedItem(value);
     }
 
     private void updateOldMappings() {
         joldMapping.setEnabled(false);
         joldMapping.removeAllItems();
         joldMapping.addItem("SRG");
-        if (MappingDownloader.mappings.containsKey(mcVersion)) {
-            for (String mapping : MappingDownloader.mappings.get(mcVersion)) {
+        MinecraftVersion nearest = getNearest(mcVersion);
+        if (MappingDownloader.mappings.containsKey(nearest)) {
+            for (String mapping : MappingDownloader.mappings.get(nearest))
                 joldMapping.addItem(mapping);
-            }
         }
-        if (((DefaultComboBoxModel<String>)joldMapping.getModel()).getIndexOf(oldMapping) == -1)
-            joldMapping.addItem(oldMapping);
-        joldMapping.setSelectedItem(oldMapping);
+
+        addIfMissing(joldMapping, oldMapping);
         joldMapping.setEnabled(true);
     }
 
@@ -532,16 +547,17 @@ public class RemapperGUI {
         jnewMapping.setEnabled(false);
         jnewMapping.removeAllItems();
         jnewMapping.addItem("SRG");
-        if (MappingDownloader.mappings.containsKey(mcVersion)) {
-            for (String mapping : MappingDownloader.mappings.get(mcVersion)) {
+        MinecraftVersion nearest = getNearest(mcVersion);
+        if (MappingDownloader.mappings.containsKey(nearest)) {
+            for (String mapping : MappingDownloader.mappings.get(nearest)) {
+
                 if (newMapping.equals("UNLOADED"))
                     newMapping = mapping;
                 jnewMapping.addItem(mapping);
             }
         }
-        if (((DefaultComboBoxModel<String>)jnewMapping.getModel()).getIndexOf(newMapping) == -1)
-            jnewMapping.addItem(newMapping);
-        jnewMapping.setSelectedItem(newMapping);
+
+        addIfMissing(jnewMapping, newMapping);
         jnewMapping.setEnabled(true);
     }
 
@@ -560,7 +576,7 @@ public class RemapperGUI {
         }
         else {
             status.setText("build.gradle found:");
-            status.setForeground(Color.YELLOW);
+            status.setForeground(Color.BLACK);
             btnGetModInfo.setEnabled(true);
         }
         updateMCVersionList();
@@ -724,6 +740,7 @@ public class RemapperGUI {
             protected void update() {
                 File f = text.getText() == null ? new File(".")  : new File(text.getText());
                 if (f.exists() && !listener.getValue().equals(f)) {
+                    RemapperGUI.this.buildFailed = false;
                     listener.setValue(f);
                     updateGuiState();
                 }
@@ -736,8 +753,8 @@ public class RemapperGUI {
                 JFileChooser chooser = new JFileChooser();
                 chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
                 chooser.setFileHidingEnabled(false);
-                chooser.ensureFileIsVisible(targetDir);
-                chooser.setSelectedFile(targetDir);
+                chooser.ensureFileIsVisible(listener.getValue());
+                chooser.setSelectedFile(listener.getValue());
                 int response = chooser.showOpenDialog(RemapperGUI.this.mainFrame);
                 switch (response) {
                     case JFileChooser.APPROVE_OPTION:
@@ -758,7 +775,6 @@ public class RemapperGUI {
             public void run() {
                 if (!listener.getValue().toString().equals(text.getText()))
                     text.setText(listener.getValue().toString());
-
             }
         });
         Box ret = Box.createHorizontalBox();

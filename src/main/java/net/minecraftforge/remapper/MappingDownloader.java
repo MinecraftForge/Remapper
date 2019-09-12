@@ -37,9 +37,10 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.TreeMap;
 import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -56,7 +57,7 @@ import net.minecraftforge.remapper.json.MCPConfigV1;
 
 public class MappingDownloader implements Runnable {
     public static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    public static Map<String, List<String>> mappings = new LinkedHashMap<>();
+    public static Map<MinecraftVersion, List<String>> mappings = new TreeMap<>();
     private static Map<String, byte[]> mcpdata_cache = new HashMap<>();
 
     public static void downloadMappingList(Runnable callback) {
@@ -120,7 +121,7 @@ public class MappingDownloader implements Runnable {
             for (String mcver : json.keySet()) {
                 Map<String, int[]> values = json.get(mcver);
                 List<String> tmp = new ArrayList<>();
-                mappings.put(mcver, tmp);
+                mappings.put(MinecraftVersion.from(mcver), tmp);
                 for (String channel : values.keySet()) {
                     for (int id : values.get(channel)) {
                         tmp.add(channel + "_" + id);
@@ -140,10 +141,10 @@ public class MappingDownloader implements Runnable {
         callback.run();
     }
 
-    public static boolean needsDownload(String mcVersion, String mapping, File cacheDir) {
-        if ("UNLOADED".equals(mapping))
+    public static boolean needsDownload(MinecraftVersion mcVersion, String mapping, File cacheDir) {
+        if (mcVersion == null  || "UNLOADED".equals(mapping))
             return false;
-        if (!getMcp(mcVersion, cacheDir).exists())
+        if (!getMcp(mcVersion.toString(), cacheDir).exists())
             return true;
 
         return getCsvs(mapping, cacheDir) != null && !getCsvs(mapping, cacheDir).exists();
@@ -279,9 +280,9 @@ public class MappingDownloader implements Runnable {
 
             if (csvs != null && !csvs.exists()) {
                 String mavenVer = mcVersion;
-                for (String key : mappings.keySet()) {
-                    if (mappings.get(key).contains(channel + "_" + version)) {
-                        mavenVer = key;
+                for (Entry<MinecraftVersion, List<String>> entry : mappings.entrySet()) {
+                    if (entry.getValue().contains(channel + "_" + version)) {
+                        mavenVer = entry.getKey().toString();
                         break;
                     }
                 }

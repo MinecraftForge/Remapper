@@ -57,22 +57,20 @@ public class RemapperTask {
     }
     private static final IProgressListener NULL = (l) -> {};
 
-    public static void runRemapMod(final List<File> deps, final List<File> srcs, final String mcVersion,
+    public static void runRemapMod(final List<File> deps, final List<File> srcs, final MinecraftVersion mcVersion,
             final String oldMapping, final String newMapping, final File cacheDir, final IProgressListener listener) {
-        new Thread(new Runnable(){
-            @Override
-            public void run() {
-                runRemapMod_Thread(deps, srcs, mcVersion, oldMapping, newMapping, cacheDir, listener);
-            }
-        }).start();
+        new Thread(() -> runRemapMod_Thread(deps, srcs, mcVersion, oldMapping, newMapping, cacheDir, listener)).start();
     }
 
-    public static void runRemapMod_Thread(final List<File> deps, final List<File> srcs, final String mcVersion,
+    public static void runRemapMod_Thread(final List<File> deps, final List<File> srcs, final MinecraftVersion mcVersion,
             final String oldMapping, final String newMapping, final File cache, final IProgressListener listener) {
 
+        if (mcVersion == null)
+            return;
+
         if (extractRange(deps, srcs, listener)) {
-            File srg = createSrg(mcVersion, oldMapping, newMapping, cache, listener);
-            File exc = createExc(mcVersion, oldMapping, newMapping, cache, listener);
+            File srg = createSrg(mcVersion.toString(), oldMapping, newMapping, cache, listener);
+            File exc = createExc(mcVersion.toString(), oldMapping, newMapping, cache, listener);
 
             applyRemap(srg, exc, deps, srcs, listener);
         }

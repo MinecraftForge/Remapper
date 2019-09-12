@@ -93,8 +93,10 @@ class GatherModInfo implements ActionListener, Runnable {
             ProcessBuilder pb = new ProcessBuilder(gradlew.getPath(), "--build-file", "REMAP_MOD_TEMP.gradle", "--console=plain", "--stacktrace", "remapGetInfo");
             pb.redirectErrorStream(true);
             pb.directory(dir);
-            System.out.println("Starting process: " + pb.command().stream().collect(Collectors.joining(" ")));
+            pb.environment().put("JAVA_HOME", this.remapperGUI.jdkDir.getAbsolutePath());
+            System.out.println("Process:   " + pb.command().stream().collect(Collectors.joining(" ")));
             System.out.println("Directory: " + pb.directory());
+            System.out.println("Java Home: " + this.remapperGUI.jdkDir);
             Process p = pb.start();
             while (p.isAlive()) {
                 BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
@@ -105,7 +107,7 @@ class GatherModInfo implements ActionListener, Runnable {
                     if (index == -1)
                         continue;
                     String prefix = line.substring(0, index);
-                    String suffix = line.substring(index + 1);
+                    String suffix = line.substring(index + 1).trim();
                     if (prefix.equals("DEP")) {
                         println("DEPENDANCY: " + suffix);
                         this.remapperGUI.deps.add(new File(suffix));
@@ -116,7 +118,7 @@ class GatherModInfo implements ActionListener, Runnable {
                     }
                     else if (prefix.equals("MINECRAFT")) {
                         println(line);
-                        this.remapperGUI.mcVersion = suffix;
+                        this.remapperGUI.mcVersion = MinecraftVersion.from(suffix);
                         this.remapperGUI.updateGuiState();
                     }
                     else if (prefix.equals("MAPPING")) {
@@ -132,7 +134,6 @@ class GatherModInfo implements ActionListener, Runnable {
                     else if(line.startsWith("BUILD FAILED") || line.startsWith("FAILURE")) {
                         this.remapperGUI.buildFailed = true;
                         this.remapperGUI.updateGuiState();
-                        break;
                     }
                 }
             }

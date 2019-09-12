@@ -2,6 +2,7 @@
 /bin
 /.settings
 /.classpath
+/.project
 
 #In case people make their workspace in the repo
 /eclipse/
@@ -20,18 +21,10 @@
 /repo/
 /buildSrc
 
-#Patch rejects
-/patches-/
-*.patch.rej
-
 # FML changelog
 changelog.txt
-/patches_old/
-/patches_old_bak/
 *.py
 *.7z
-/ApplyRange.log
-/ExtractRange.log
 /ExtractRange.txt
 /mappings.json
-*.log
+/*.log
