@@ -70,16 +70,22 @@ class GatherModInfo implements ActionListener, Runnable {
                 "      println 'DEP: ' + f.getPath()",
                 "    println 'DEP: ' + jar.archivePath",
                 "    println 'MAPPING: ' + minecraft.mappings",
-                "    println 'MINECRAFT: ' + minecraft.version",
+                "    if (project.tasks.findByName('downloadMCMeta')) {",
+                "      println 'MINECRAFT: ' + project.tasks.findByName('downloadMCMeta').getMCVersion()",
+                "      println 'CACHE: ' + new File(project.getGradle().getGradleUserHomeDir(), '/caches/forge_gradle/maven_downloader/').getAbsolutePath()",
+                "    } else {",
+                "      println 'MINECRAFT: ' + minecraft.version",
+                "      println 'CACHE: ' + new File(project.getGradle().getGradleUserHomeDir(), '/caches/minecraft/').getAbsolutePath()",
+                "    }",
                 "    for (File f : sourceSets.main.java.srcDirs)",
                 "      println 'SOURCE: ' + f.getPath()",
-                "    println 'CACHE: ' + new File(project.getGradle().getGradleUserHomeDir(), '/caches/minecraft/').getAbsolutePath()",
                 "  }",
                 "}",
                 "if (project.tasks.findByName('setupDevWorkspace'))",
                 "  remapGetInfo.dependsOn('setupDevWorkspace')",
                 "remapGetInfo.dependsOn('build')"
             };
+            fos.write('\n');
             for (String line : lines) {
                 fos.write(line.getBytes());
                 fos.write('\n');
@@ -90,7 +96,7 @@ class GatherModInfo implements ActionListener, Runnable {
             this.remapperGUI.deps.clear();
             this.remapperGUI.srcs.clear();
 
-            ProcessBuilder pb = new ProcessBuilder(gradlew.getPath(), "--build-file", "REMAP_MOD_TEMP.gradle", "--console=plain", "--stacktrace", "remapGetInfo");
+            ProcessBuilder pb = new ProcessBuilder(gradlew.getPath(), "--build-file", "REMAP_MOD_TEMP.gradle", "--console=plain", "--stacktrace", "--no-daemon", "remapGetInfo");
             pb.redirectErrorStream(true);
             pb.directory(dir);
             pb.environment().put("JAVA_HOME", this.remapperGUI.jdkDir.getAbsolutePath());

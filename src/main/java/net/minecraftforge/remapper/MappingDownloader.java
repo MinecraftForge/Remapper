@@ -144,10 +144,10 @@ public class MappingDownloader implements Runnable {
     public static boolean needsDownload(MinecraftVersion mcVersion, String mapping, File cacheDir) {
         if (mcVersion == null  || "UNLOADED".equals(mapping))
             return false;
-        if (!getMcp(mcVersion.toString(), cacheDir).exists())
+        if (!getMcp(mcVersion, cacheDir).exists())
             return true;
 
-        return getCsvs(mapping, cacheDir) != null && !getCsvs(mapping, cacheDir).exists();
+        return getCsvs(mapping, mcVersion, cacheDir) != null && !getCsvs(mapping, mcVersion, cacheDir).exists();
     }
 
 
@@ -166,7 +166,7 @@ public class MappingDownloader implements Runnable {
         return null;
     }
 
-    public static byte[] getMcpData(String version, File cache, String key, boolean optional) throws IOException {
+    public static byte[] getMcpData(MinecraftVersion version, File cache, String key, boolean optional) throws IOException {
         byte[] data = mcpdata_cache.get(version + " " + key);
         if (data != null)
             return data;
@@ -228,67 +228,43 @@ public class MappingDownloader implements Runnable {
         return count;
     }
 
-    public static File getMcp(String version, File cache) {
+    public static File getMcp(MinecraftVersion version, File cache) {
         return new File(cache, "de/oceanlabs/mcp/mcp_config/" + version + "/mcp_config-" + version + ".zip");
     }
-    public static File getMcpRoot(String version, File cache) {
+    public static File getMcpRoot(MinecraftVersion version, File cache) {
         return new File(cache, "de/oceanlabs/mcp/mcp_config/" + version + "/");
     }
-    public static File getCsvs(String mapping, File cacheDir) {
+    public static File getCsvs(String mapping, MinecraftVersion mcVersion, File cacheDir) {
         if ("SRG".equals(mapping))
             return null;
-        mapping = mapping.replace("_nodoc", "");
-        String channel = mapping;
-        String version = mapping;
-        if (mapping.indexOf('_') != -1) {
-            channel = mapping.substring(0, mapping.lastIndexOf('_'));
-            version = mapping.substring(mapping.lastIndexOf('_') + 1);
-        }
-        return new File(cacheDir, "de/oceanlabs/mcp/mcp_" + channel + "_nodoc/" + version + "/mcp_" + channel + "_nodoc-" + version + ".zip");
+        MCPArtifact mcpart = new MCPArtifact(mapping, mcVersion);
+        return new File(cacheDir, mcpart.group.replace('.', '/') + '/' + mcpart.name + '/' + mcpart.version + '/' + mcpart.name + '-' + mcpart.version + ".zip");
     }
 
-    public static File getMappingRoot(String mapping, File cache) {
-        if ("SRG".equals(mapping))
-            return null;
-        mapping = mapping.replace("_nodoc", "");
-        String channel = mapping;
-        String version = mapping;
-        if (mapping.indexOf('_') != -1) {
-            channel = mapping.substring(0, mapping.lastIndexOf('_'));
-            version = mapping.substring(mapping.lastIndexOf('_') + 1);
-        }
-        return new File(cache, "de/oceanlabs/mcp/mcp_" + channel + "_nodoc/" + version + "/");
+    public static File getMappingRoot(String mapping, MinecraftVersion mcVersion, File cache) {
+        File ret = getCsvs(mapping, mcVersion, cache);
+        return ret == null ? null : ret.getParentFile();
     }
 
-    public static void download(final String mcVersion, final String mapping, final File cacheDir) {
+    public static void download(final MinecraftVersion mcVersion, final String mapping, final File cacheDir) {
         download(mcVersion, mapping, cacheDir, (status) -> {});
     }
-    public static void download(final String mcVersion, final String mapping, final File cacheDir, final Consumer<Boolean> callback) {
+    public static void download(final MinecraftVersion mcVersion, final String mapping, final File cacheDir, final Consumer<Boolean> callback) {
         new Thread(() -> {
             if (!getMcp(mcVersion, cacheDir).exists()) {
-                if (!download(getMaven("de.oceanlabs.mcp", "mcp_config", mcVersion, null, "zip"), getMcp(mcVersion, cacheDir))) {
+                if (!download(getMaven("de.oceanlabs.mcp", "mcp_config", mcVersion.toString(), null, "zip"), getMcp(mcVersion, cacheDir))) {
                     callback.accept(false);
                     return;
                 }
             }
 
-            String tmp = mapping.replace("_nodoc", "");
-            String channel = tmp.substring(0, tmp.lastIndexOf('_'));
-            String version = tmp.substring(tmp.lastIndexOf('_') + 1);
-            File csvs = getCsvs(mapping, cacheDir);
-
+            File csvs = getCsvs(mapping, mcVersion, cacheDir);
 
             if (csvs != null && !csvs.exists()) {
-                String mavenVer = mcVersion;
-                for (Entry<MinecraftVersion, List<String>> entry : mappings.entrySet()) {
-                    if (entry.getValue().contains(channel + "_" + version)) {
-                        mavenVer = entry.getKey().toString();
-                        break;
-                    }
-                }
+                MCPArtifact mcpart = new MCPArtifact(mapping, mcVersion);
 
-                URL maven = getMaven("de.oceanlabs.mcp", "mcp_" + channel +"_nodoc", version + "-" + mavenVer, null, "zip");
-                if (!download(maven, csvs.getParentFile())) {
+                URL maven = getMaven(mcpart.group, mcpart.name, mcpart.version, null, "zip");
+                if (!download(maven, csvs)) {
                     callback.accept(false);
                     return;
                 }
@@ -303,11 +279,44 @@ public class MappingDownloader implements Runnable {
         System.out.println("To:          " + target.getAbsolutePath());
 
         try (InputStream is = url.openStream()) {
+            if (!target.getParentFile().exists())
+                target.getParentFile().mkdirs();
             Files.copy(is, target.toPath(), StandardCopyOption.REPLACE_EXISTING);
             return true;
         } catch (IOException e) {
             e.printStackTrace();
             return false;
         }
+    }
+
+    private static class MCPArtifact {
+        final String group = "de.oceanlabs.mcp";
+        final String name;
+        final String version;
+        final String channel;
+
+        MCPArtifact(String mapping, MinecraftVersion mcVersion) {
+            mapping = mapping.replace("_nodoc", "");
+            String channel = mapping;
+            String version = mapping;
+            if (mapping.indexOf('_') != -1) {
+                channel = mapping.substring(0, mapping.lastIndexOf('_'));
+                version = mapping.substring(mapping.lastIndexOf('_') + 1);
+            }
+            if (version.indexOf('-') == -1) {
+                String mavenVer = mcVersion.toString();
+                for (Entry<MinecraftVersion, List<String>> entry : mappings.entrySet()) {
+                    if (entry.getValue().contains(mapping)) {
+                        mavenVer = entry.getKey().toString();
+                        break;
+                    }
+                }
+                version = version + '-' + mavenVer;
+            }
+            this.channel = channel;
+            this.name = "mcp_" + this.channel + "_nodoc";
+            this.version = version;
+        }
+
     }
 }

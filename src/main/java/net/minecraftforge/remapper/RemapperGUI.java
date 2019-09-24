@@ -19,8 +19,6 @@
 
 package net.minecraftforge.remapper;
 
-import net.minecraftforge.remapper.RemapperTask.IProgressListener;
-
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -344,7 +342,7 @@ public class RemapperGUI {
         this.jDownloadOld.addActionListener(e -> {
             if (mcVersion != null && MappingDownloader.needsDownload(mcVersion, oldMapping, cacheDir)) {
                 setStatus("Downloading " + oldMapping + " for " + mcVersion, Color.BLACK).run();
-                MappingDownloader.download(mcVersion.toString(), oldMapping, cacheDir, (success) -> {
+                MappingDownloader.download(mcVersion, oldMapping, cacheDir, (success) -> {
                     if (success)
                         setStatus("Download Complete!", Color.BLACK).run();
                     else
@@ -468,7 +466,7 @@ public class RemapperGUI {
         this.jDownloadNew.addActionListener(e -> {
             if (mcVersion != null && MappingDownloader.needsDownload(mcVersion, newMapping, cacheDir)) {
                 setStatus("Downloading " + newMapping + " for " + mcVersion, Color.BLACK).run();
-                MappingDownloader.download(mcVersion.toString(), newMapping, cacheDir, (success) -> {
+                MappingDownloader.download(mcVersion, newMapping, cacheDir, (success) -> {
                     if (success)
                         setStatus("Download Complete!", Color.BLACK).run();
                     else
@@ -489,7 +487,10 @@ public class RemapperGUI {
 
         this.btnRemapMod = new JButton("Start Remap");
         this.btnRemapMod.setEnabled(false);
-        this.btnRemapMod.addActionListener(e -> RemapperTask.runRemapMod(deps, srcs, mcVersion, oldMapping, newMapping, cacheDir, line -> setStatus(line, Color.BLACK).run()));
+        this.btnRemapMod.addActionListener(e -> RemapperTask.runRemapMod(deps, srcs, mcVersion, oldMapping, newMapping, cacheDir, line -> {
+            System.out.println(line);
+            setStatus(line, Color.BLACK).run();
+        }));
 
         panel.add(this.btnRemapMod, BorderLayout.EAST);
         return panel;
